@@ -1,0 +1,6 @@
+dist/
+node_modules/
+.npm-cache/
+coverage/
+.test-agent/
+*.tgz

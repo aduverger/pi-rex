@@ -1,0 +1,32 @@
+{
+  "name": "@aduverger/pi-rex",
+  "version": "0.0.1",
+  "description": "Pi extension for a native mobile experience with Rex. Placeholder package; functionality is not implemented yet.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aduverger/pi-rex.git"
+  },
+  "homepage": "https://github.com/aduverger/pi-rex#readme",
+  "bugs": {
+    "url": "https://github.com/aduverger/pi-rex/issues"
+  },
+  "type": "module",
+  "license": "MIT",
+  "author": "Alexandre Duverger",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "rex",
+    "mobile"
+  ],
+  "files": [
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "pi": {
+    "extensions": []
+  }
+}
