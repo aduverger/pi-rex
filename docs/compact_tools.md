@@ -43,7 +43,7 @@ These are retained design decisions, not additional user requirements:
 
 ## Validation and release prerequisites
 
-- Standard validation: `npm run check` (strict TypeScript plus 28 Node tests), `git diff --check`, and `npm pack --dry-run`.
+- Standard validation: `npm run check` (strict TypeScript plus 29 Node tests), `git diff --check`, and `npm pack --dry-run`.
 - Renderer tests use actual Pi tool components for successful/failed read/write/edit/bash, native detail delegation, folding, ANSI styling, Unicode widths, resize/tiny-width fallback, themes, custom child mouse coordinates/focus, and desktop handoff. A custom self-rendering tool checks the codemode-style delegation path; codemode has not been exercised against a model.
 - The scrollbar regression uses Pi's actual ScrollView/layout renderer to verify that visible scrollbar cells do not overwrite the frame and that visibility changes do not reflow it.
 - CLI fixtures cover ownership changes without resize, unrelated blocks, query failure/recovery, stream exit, missing CLI, malformed JSON, non-TUI startup, and idempotent shutdown.
@@ -69,7 +69,7 @@ Least-confident first:
 
 ## Test contracts and counterfactuals
 
-The suite has 28 tests. Each row names wrong observable behavior it should reject and an equivalent implementation change it should tolerate. The native-tool matrix is eight tests; all other rows are individual tests.
+The suite has 29 tests. Each row names wrong observable behavior it should reject and an equivalent implementation change it should tolerate. The native-tool matrix is eight tests; all other rows are individual tests.
 
 | Test | Plausible regression detected | Behavior-preserving refactor tolerated |
 | --- | --- | --- |
@@ -82,6 +82,7 @@ The suite has 28 tests. Each row names wrong observable behavior it should rejec
 | Bash success | A successful bash row exposes output while folded or desktop output differs from Pi. | Inline or extract presentation helpers. |
 | Bash error | Failed bash output disappears on expansion or remains wrong after desktop handoff. | Change mobile-mode state storage. |
 | Neutral compact frames | Standard folded tools gain colored padding or extra empty rows, or retain frames on desktop. | Build the same frame without Box/Container. |
+| Wrapped edit highlights | Reverse-video highlighting leaks into the right border/gutter after a line wraps or the terminal resizes. | Change frame composition while preserving native diff content and neutral decorations. |
 | Auto scrollbar | Showing the scrollbar overwrites a corner or shifts tool text. | Change frame internals while preserving terminal cells. |
 | Theme changes | Existing frames retain dark-theme colors after a switch to light. | Change theme lookup or invalidation mechanics. |
 | Child mouse/focus | A framed custom control receives the wrong click position or loses its focus request. | Rewrite coordinate translation while delivering the same local event. |
@@ -129,3 +130,20 @@ Least-confident first:
 3. Remove only the nested component's leading separator. Its full shell is retained for undefined-tool desktop parity; missing slots of defined tools use an unpadded native shell inside the existing wrapper.
 4. Call native renderers even while folded and suppress only attachment of their output. Preserve delegated state and let Pi perform final timer cleanup; no new timer or cleanup policy is added.
 5. Give the existing native-tool comparison fixture a recorded duration so comparisons remain deterministic now that hidden shell renderers also start their native clocks. The new timer regression uses Node's mock clock and observes redraws, not private interval fields.
+
+## Wrapped diff follow-up
+
+Native edit diffs can leave reverse-video highlighting active across wrapped lines. The frame now resets ANSI styling after each content row, before its own padding, right border, and scrollbar gutter. The narrow unframed fallback also resets styling before its gutter. Native content, continuation highlights, desktop rendering, and mouse geometry remain unchanged.
+
+The requested reduction in blank space **between** tool frames is blocked by Pi 1.4.0: ToolExecutionComponent unconditionally prepends one blank row even with `renderShell: "self"`. The renderer API controls content after that row, not transcript spacing. Removing it cleanly needs a host-side spacing hook; no cursor escapes, private component mutations, or tool regrouping have been added.
+
+Validation: `PI_TRUE_COLOR=0 make check`, `PI_TRUE_COLOR=0 make pack-check`, `FORCE_COLOR=3 PI_TRUE_COLOR=1 npm test`, and `git diff --check` pass (29 tests). The regression's border-isolation assertion failed before the fix. Live Rex iOS validation remains outstanding.
+
+### Follow-up decision ledger
+
+Least-confident first:
+
+1. Interpret the screenshot's white right-hand square as reverse-video style leakage, reproduced using Pi's actual edit renderer and a wrapped intra-line diff. Device confirmation after `/reload` remains necessary.
+2. Keep Pi's mandatory inter-tool separator rather than introduce an unsupported workaround. Reducing that gap remains open, not completed.
+3. Reset all ANSI graphic attributes at the content/frame boundary, rather than only reverse video, so other content styles cannot color the frame or gutter either. Do not change native text or wrapping.
+4. The regression uses Pi's real edit/diff/wrapping path and deterministically enables inverse ANSI through a test-scoped mock of the public Theme method, since Pi disables those attributes without a TTY. It checks resizing, narrow fallback, folding, native content preservation, and desktop handoff.

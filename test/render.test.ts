@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   createBashToolDefinition, createEditToolDefinition, createReadToolDefinition,
-  createWriteToolDefinition, initTheme, ToolExecutionComponent, type Theme, type ToolRenderers,
+  createWriteToolDefinition, initTheme, ToolExecutionComponent, Theme, type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
 import { Container, MouseRegion, ScrollView, Text, getCapabilities, setCapabilities, sliceByColumn, stripTerminalSequences, visibleWidth, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { compactToolRenderer } from "../src/render.ts";
@@ -87,7 +87,7 @@ for (const { name, args, definition, output } of cases) {
       baseline.setExpanded(true);
       const native = baseline.render(37);
       const body = definition.renderShell === "self" ? native.slice(1) : native.slice(2, -1);
-      assert.deepEqual(frameBody(component), body.map((line) => line + " ".repeat(Math.max(0, 37 - visibleWidth(line)))));
+      assert.deepEqual(frameBody(component), body.map((line) => line + "\x1b[0m" + " ".repeat(Math.max(0, 37 - visibleWidth(line)))));
       clickRow(component, name === "bash" ? "$" : name);
       assert.equal(content(component).length, 1);
       setMobile(false);
@@ -115,6 +115,39 @@ test("folded tools share neutral frames without extra padding rows", () => {
     setMobile(true);
     assert.equal(component.render(40)[1], lines[1]);
   }
+});
+
+test("wrapped edit highlighting stays inside the frame, including after resizing and desktop handoff", (t) => {
+  // Emit inverse ANSI even without a TTY, as Pi does in Rex.
+  t.mock.method(Theme.prototype, "inverse", (text: string) => `\x1b[7m${text}\x1b[27m`);
+  const definition = createEditToolDefinition(process.cwd()) as ToolRenderers;
+  const args = { path: "src/render.ts" };
+  const result = {
+    content: [{ type: "text", text: "Edited file" }],
+    details: { diff: '-34 ] ;\n+34 ] as const satisfies Readonly<CreateApiKey["scopes"]>;', firstChangedLine: 34 },
+    isError: false,
+  };
+  const { component, setMobile } = tool("edit", args, definition);
+  component.updateResult(result);
+  component.setExpanded(true);
+  const native = new ToolExecutionComponent("edit", "native", args, { showImages: false }, definition, ui, process.cwd());
+  native.updateResult(result);
+  native.setExpanded(true);
+  for (const width of [40, 24, 60, 40]) {
+    const lines = component.render(width);
+    const wrapped = lines.find((line) => line.includes("\x1b[7m") && !line.includes("\x1b[27m"));
+    assert.ok(wrapped, "fixture must wrap before the inverse highlight closes");
+    assert.ok(wrapped.endsWith("\x1b[0m" + rendererTheme().fg("dim", "│") + " "));
+    assert.deepEqual(frameBody(component, width), native.render(width - 3).slice(1).map((line) =>
+      line + "\x1b[0m" + " ".repeat(Math.max(0, width - 3 - visibleWidth(line)))));
+    assert.ok(lines.every((line) => visibleWidth(line) <= width));
+  }
+  assert.ok(component.render(5).slice(1).every((line) => line.endsWith("\x1b[0m ")));
+  component.setExpanded(false);
+  assert.doesNotMatch(component.render(40).join("\n"), /\x1b\[7m/);
+  component.setExpanded(true);
+  setMobile(false);
+  assert.deepEqual(component.render(40), native.render(40));
 });
 
 test("Pi's auto scrollbar only covers the gutter, leaving frame corners and contents intact", () => {
@@ -334,7 +367,7 @@ test("generic fallbacks match native formatting, sanitization, previews, and ima
       setMobile(true);
       if (expanded) {
         const nativeBody = baseline.render(37).slice(2, -1);
-        assert.deepEqual(frameBody(component), nativeBody.map((line) => line + " ".repeat(Math.max(0, 37 - visibleWidth(line)))));
+        assert.deepEqual(frameBody(component), nativeBody.map((line) => line + "\x1b[0m" + " ".repeat(Math.max(0, 37 - visibleWidth(line)))));
         if (!definition?.renderResult) assert.match(content(component).join("\n"), /image\/png/);
       } else {
         assert.equal(content(component).length, 1);
