@@ -41,7 +41,7 @@ Least-confident first:
 
 ## Completed validation
 
-- `npm run check`: strict TypeScript and 21 tests passed.
+- `npm run check`: strict TypeScript and 25 tests passed.
 - Tests use real Pi tool components for read/write/edit/bash rendering, native mouse expansion, desktop handoff, Unicode widths, partial output, and errors. A custom self-rendering tool checks delegated state/detail preservation; codemode itself was not run against a model.
 - Rex CLI fixtures cover owner handoff without resize, unrelated blocks, failed-query recovery, stream exit, missing executable, malformed JSON, non-TUI mode, and idempotent shutdown.
 - Live read-only detection and watcher startup/shutdown passed against the installed Rex server (macOS owner).
@@ -75,6 +75,30 @@ Least-confident first:
 
 1. Keep pending backgrounds when expanded as well as success/error backgrounds: this follows the existing requirement to preserve native expanded views.
 2. No new tool-specific rules or abstractions; the correction only narrows background suppression to the existing folded state.
+
+## Mobile tool frames
+
+- Draw a neutral, rounded border around each folded or expanded tool on iOS.
+- Reuse the existing frame content and native expanded renderers. Replace the standard shell's vertical padding with border rows; preserve custom self-rendered content without trimming it.
+- Forward mouse coordinates through the border so existing expansion and custom child controls keep working.
+- Leave desktop rendering, tool execution, keyboard behavior, and saved messages unchanged. No grouping in this change.
+- Validate native contents/backgrounds at the reduced inner width, narrow Unicode layouts, mouse propagation, resizing, and desktop handoff.
+
+### Frame decision ledger
+
+Least-confident first:
+
+1. Preserve all expanded self-rendered content, including its own padding. Its outer frame adds two border rows; trimming it could remove real tool output. Standard shells replace their two blank padding rows instead, and all folded tools have the same three-row frame.
+2. Below five terminal columns, show clipped original content without a border; there is not enough room for a useful padded frame. No width option was added.
+3. Use rounded box-drawing characters in Pi's `dim` theme color. The border is neutral for pending, success, and error states; status remains on the icon and native expanded content.
+4. Inline images remain outside the text frame, as Pi renders them separately. No global image setting, keyboard behavior, or custom child control was changed.
+
+### Frame validation
+
+- Native read/write/edit/bash success and error contents retain their ANSI styling at the reduced inner width. Desktop output still matches native Pi exactly.
+- Tests cover folded height, Unicode widths, resize and tiny-width fallback, theme changes, expansion/refolding, custom child coordinates/focus, failures, and desktop handoff.
+- A real read of `README.md` was executed and its actual result rendered folded and expanded at 48 columns. Both views stayed within the terminal width.
+- No real-device frame-tap check has been performed yet. Rex's existing keyboard-on-tap issue is unchanged; the removed dismissal workaround was not reintroduced.
 
 ## Remaining manual validation
 

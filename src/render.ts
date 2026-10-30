@@ -1,5 +1,5 @@
 import type { Theme, ToolRenderers } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Text, stripTerminalSequences, truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import { Box, Container, Text, stripTerminalSequences, truncateToWidth, visibleWidth, type Component, type TuiMouseEvent } from "@earendil-works/pi-tui";
 
 type RenderContext = Parameters<NonNullable<ToolRenderers["renderCall"]>>[2];
 type Result = Parameters<NonNullable<ToolRenderers["renderResult"]>>[0];
@@ -19,6 +19,51 @@ class Summary implements Component {
     return [truncateToWidth(this.text(), width)];
   }
   invalidate() {}
+}
+
+class ToolFrame implements Component {
+  private content: Component;
+  private theme: Theme;
+  private replacePadding: boolean;
+
+  constructor(content: Component, theme: Theme, replacePadding: boolean) {
+    this.content = content;
+    this.theme = theme;
+    this.replacePadding = replacePadding;
+  }
+
+  render(width: number): string[] {
+    if (width < 5) return this.content.render(width).map((line) => truncateToWidth(line, width, ""));
+    const innerWidth = width - 2;
+    const lines = this.content.render(innerWidth);
+    if (!lines.length) return [];
+    const body = this.replacePadding ? lines.slice(1, -1) : lines;
+    const side = this.theme.fg("dim", "│");
+    return [
+      this.theme.fg("dim", `╭${"─".repeat(innerWidth)}╮`),
+      ...body.map((line) => {
+        const fitted = truncateToWidth(line, innerWidth, "");
+        return `${side}${fitted}${" ".repeat(Math.max(0, innerWidth - visibleWidth(fitted)))}${side}`;
+      }),
+      this.theme.fg("dim", `╰${"─".repeat(innerWidth)}╯`),
+    ];
+  }
+
+  handleMouse(event: TuiMouseEvent) {
+    if (event.width < 5) return this.content.handleMouse?.(event);
+    if (event.x <= 0 || event.x >= event.width - 1 || event.y <= 0 || event.y >= event.height - 1) return undefined;
+    return this.content.handleMouse?.({
+      ...event,
+      x: event.x - 1,
+      y: event.y - (this.replacePadding ? 0 : 1),
+      width: event.width - 2,
+      height: event.height - (this.replacePadding ? 0 : 2),
+    });
+  }
+
+  invalidate() {
+    this.content.invalidate();
+  }
 }
 
 export function compactToolRenderer(
@@ -60,7 +105,8 @@ export function compactToolRenderer(
       const cached = state(context);
       const folded = isMobile() && !context.expanded;
       const background = context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg";
-      cached.frame = original?.renderShell === "self"
+      const selfRendered = original?.renderShell === "self" && !folded;
+      cached.frame = selfRendered
         ? new Container()
         : new Box(context.outputPad, 1, folded ? undefined : (text) => theme.bg(background, text));
       if (folded) {
@@ -71,7 +117,7 @@ export function compactToolRenderer(
           : new Text(`${name}\n${JSON.stringify(args, null, 2) ?? ""}`, 0, 0);
         cached.frame.addChild(cached.call);
       }
-      return cached.frame;
+      return isMobile() ? new ToolFrame(cached.frame, theme, !selfRendered) : cached.frame;
     },
     renderResult(result: Result, options, theme, context) {
       track(context);

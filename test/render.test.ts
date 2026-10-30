@@ -4,14 +4,26 @@ import {
   createBashToolDefinition, createEditToolDefinition, createReadToolDefinition,
   createWriteToolDefinition, initTheme, ToolExecutionComponent, type Theme, type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { Text, stripTerminalSequences, visibleWidth, type TUI } from "@earendil-works/pi-tui";
+import { MouseRegion, Text, stripTerminalSequences, visibleWidth, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { compactToolRenderer } from "../src/render.ts";
 import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
 
 initTheme("dark", false);
 const ui = { requestRender() {} } as TUI;
 const plain = (component: ToolExecutionComponent, width = 40) => component.render(width).map(stripTerminalSequences);
-const content = (component: ToolExecutionComponent, width = 40) => plain(component, width).filter((line) => line.trim());
+function content(component: ToolExecutionComponent, width = 40) {
+  const lines = plain(component, width);
+  const body = lines[1]?.startsWith("╭") ? lines.slice(2, -1).map((line) => line.slice(1, -1)) : lines;
+  return body.filter((line) => line.trim());
+}
+
+function frameBody(component: ToolExecutionComponent, width = 40) {
+  const side = rendererTheme().fg("dim", "│");
+  return component.render(width).slice(2, -1).map((line) => {
+    assert.ok(line.startsWith(side) && line.endsWith(side));
+    return line.slice(side.length, -side.length);
+  });
+}
 
 function rendererTheme(): Theme {
   let theme: Theme | undefined;
@@ -72,7 +84,9 @@ for (const { name, args, definition, output } of cases) {
       baseline.markExecutionStarted();
       baseline.updateResult(result);
       baseline.setExpanded(true);
-      assert.deepEqual(component.render(40), baseline.render(40));
+      const native = baseline.render(38);
+      const body = definition.renderShell === "self" ? native.slice(1) : native.slice(2, -1);
+      assert.deepEqual(frameBody(component), body.map((line) => line + " ".repeat(Math.max(0, 38 - visibleWidth(line)))));
       clickRow(component, name === "bash" ? "$" : name);
       assert.equal(content(component).length, 1);
       setMobile(false);
@@ -84,6 +98,82 @@ for (const { name, args, definition, output } of cases) {
     });
   }
 }
+
+test("folded tools share neutral frames without extra padding rows", () => {
+  const theme = rendererTheme();
+  for (const { name, args, definition } of cases) {
+    const { component, setMobile } = tool(name, args, definition);
+    component.updateResult({ content: [{ type: "text", text: "done" }], isError: false });
+    const lines = component.render(40);
+    assert.equal(lines.length, 4);
+    assert.equal(lines[1], theme.fg("dim", `╭${"─".repeat(38)}╮`));
+    assert.equal(lines.at(-1), theme.fg("dim", `╰${"─".repeat(38)}╯`));
+    assert.ok(lines.slice(1).every((line) => visibleWidth(line) === 40));
+    setMobile(false);
+    assert.ok(!plain(component).some((line) => line.startsWith("╭")));
+    setMobile(true);
+    assert.equal(component.render(40)[1], lines[1]);
+  }
+});
+
+test("frame borders resize safely, including terminals too narrow for a frame", () => {
+  const { component } = tool("read", { path: "中文/👩‍💻/long-name.ts" });
+  component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
+  for (const width of [40, 12, 5, 1, 2, 3, 4, 20, 40]) {
+    const lines = component.render(width);
+    assert.ok(lines.every((line) => visibleWidth(line) <= width));
+    assert.equal(plain(component, width).some((line) => line.startsWith("╭")), width >= 5);
+  }
+});
+
+test("frame colors follow Pi theme changes", () => {
+  const { component } = tool("read", { path: "src/example.ts" });
+  component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
+  const darkBorder = component.render(40)[1];
+  try {
+    initTheme("light", false);
+    component.invalidate();
+    assert.equal(component.render(40)[1], rendererTheme().fg("dim", `╭${"─".repeat(38)}╮`));
+    assert.notEqual(component.render(40)[1], darkBorder);
+  } finally {
+    initTheme("dark", false);
+  }
+});
+
+test("frames forward custom child mouse coordinates and focus unchanged", () => {
+  const seen: TuiMouseEvent[] = [];
+  const original: ToolRenderers = {
+    renderShell: "self",
+    renderCall: () => new MouseRegion(new Text("custom control", 0, 0), (event) => {
+      seen.push(event);
+      return { handled: true, focus: true };
+    }),
+  };
+  const { component, setMobile } = tool("custom_tool", {}, original);
+  component.updateResult({ content: [], isError: false });
+  component.setExpanded(true);
+  function tapControl() {
+    const lines = plain(component);
+    const y = lines.findIndex((line) => line.includes("custom control"));
+    assert.ok(y >= 0);
+    const result = component.handleMouse({
+      type: "click", button: "left", x: 2, y, screenX: 2, screenY: y,
+      width: 40, height: lines.length, shift: false, alt: false, ctrl: false,
+    });
+    assert.equal(result?.handled, true);
+    assert.equal(result?.focus, true);
+  }
+  tapControl();
+  assert.equal(seen[0].x, 1);
+  assert.equal(seen[0].y, 0);
+  assert.equal(seen[0].width, 38);
+  assert.equal(seen[0].height, 1);
+  setMobile(false);
+  tapControl();
+  assert.equal(seen[1].x, 2);
+  assert.equal(seen[1].y, 0);
+  assert.equal(seen[1].width, 40);
+});
 
 test("streaming arguments and results stay folded; errors show on the same row", () => {
   const { component } = tool("bash", { command: "npm test\nwith more arguments" }, createBashToolDefinition(process.cwd()) as ToolRenderers);
