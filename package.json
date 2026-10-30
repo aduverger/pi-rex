@@ -3,13 +3,18 @@
   "version": "0.0.1",
   "description": "Compact, foldable Pi tool output in Rex on iOS.",
   "scripts": {
-    "check": "tsc --noEmit && npm test",
-    "test": "node --test test/*.test.ts"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "verify:package": "node scripts/verify-package.mjs",
+    "pack:check": "npm_config_cache=.npm-cache npm pack --dry-run && npm run verify:package",
+    "check": "npm run typecheck && npm test && npm run verify:package",
+    "prepack": "npm run check"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/aduverger/pi-rex.git"
   },
+  "homepage": "https://github.com/aduverger/pi-rex#readme",
   "homepage": "https://github.com/aduverger/pi-rex#readme",
   "bugs": {
     "url": "https://github.com/aduverger/pi-rex/issues"
