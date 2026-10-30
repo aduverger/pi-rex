@@ -76,7 +76,7 @@ class ToolFrame implements Component {
   render(width: number): string[] {
     const frameWidth = width - 1;
     if (frameWidth <= 0) return [];
-    if (frameWidth < 5) return this.content.render(frameWidth).map((line) => truncateToWidth(line, frameWidth, "") + " ");
+    if (frameWidth < 5) return this.content.render(frameWidth).map((line) => truncateToWidth(line, frameWidth, "") + "\x1b[0m ");
     const innerWidth = frameWidth - 2;
     const lines = this.content.render(innerWidth);
     if (!lines.length) return [];
@@ -86,7 +86,8 @@ class ToolFrame implements Component {
       this.theme.fg("dim", `╭${"─".repeat(innerWidth)}╮`) + " ",
       ...body.map((line) => {
         const fitted = truncateToWidth(line, innerWidth, "");
-        return `${side}${fitted}${" ".repeat(Math.max(0, innerWidth - visibleWidth(fitted)))}${side} `;
+        // Wrapped diffs can leave inverse highlighting active at the end of a line.
+        return `${side}${fitted}\x1b[0m${" ".repeat(Math.max(0, innerWidth - visibleWidth(fitted)))}${side} `;
       }),
       this.theme.fg("dim", `╰${"─".repeat(innerWidth)}╯`) + " ",
     ];
