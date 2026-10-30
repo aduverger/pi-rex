@@ -4,7 +4,7 @@ import {
   createBashToolDefinition, createEditToolDefinition, createReadToolDefinition,
   createWriteToolDefinition, initTheme, ToolExecutionComponent, type Theme, type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { Container, MouseRegion, ScrollView, Text, sliceByColumn, stripTerminalSequences, visibleWidth, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { Container, MouseRegion, ScrollView, Text, getCapabilities, setCapabilities, sliceByColumn, stripTerminalSequences, visibleWidth, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { compactToolRenderer } from "../src/render.ts";
 import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
 import { renderLayoutFrame } from "../node_modules/@earendil-works/pi-tui/dist/layout.js";
@@ -149,15 +149,20 @@ test("Pi's auto scrollbar only covers the gutter, leaving frame corners and cont
 });
 
 test("frame colors follow Pi theme changes", () => {
-  const { component } = tool("read", { path: "src/example.ts" });
-  component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
-  const darkBorder = component.render(40)[1];
+  const capabilities = getCapabilities();
   try {
+    // Both palettes' dim colors quantize to the same ANSI index in 256-color mode.
+    setCapabilities({ ...capabilities, trueColor: true });
+    initTheme("dark", false);
+    const { component } = tool("read", { path: "src/example.ts" });
+    component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
+    const darkBorder = component.render(40)[1];
     initTheme("light", false);
     component.invalidate();
     assert.equal(component.render(40)[1], rendererTheme().fg("dim", `╭${"─".repeat(37)}╮`) + " ");
     assert.notEqual(component.render(40)[1], darkBorder);
   } finally {
+    setCapabilities(capabilities);
     initTheme("dark", false);
   }
 });
