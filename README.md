@@ -41,9 +41,27 @@ Outside Rex, the extension does nothing. RPC, print, and JSON modes do not start
 ## Develop
 
 ```sh
-npm ci --ignore-scripts
-npm run check
-npm pack --dry-run
+npm ci
+make check
+make pack-check
 ```
 
-The checks run strict TypeScript validation and Node tests. CLI fixtures test ownership changes and failure recovery without touching existing Rex sessions. Renderer tests use Pi's native tool components.
+The checks run strict TypeScript validation, Node tests, and package verification. CLI fixtures test ownership changes and failure recovery without touching existing Rex sessions. Renderer tests use Pi's native tool components. CI runs the same gates on Node 22 and 24 for pushes and pull requests. Packaging verifies the source-based extension entry point and permits only the six runtime/documentation files; no compiled build is needed.
+
+## Release
+
+From a clean, synchronized `main` branch:
+
+```sh
+make release VERSION=0.0.2
+```
+
+For a prerelease, use a non-`latest` npm tag:
+
+```sh
+make release VERSION=0.1.0-rc.1 NPM_TAG=next
+```
+
+The release target validates Git and npm state, updates package versions, runs all quality gates, pushes the release commit, publishes the public package, verifies registry visibility, and pushes the matching Git tag. It requires local npm authentication.
+
+`.github/workflows/publish.yml` also supports npm trusted publishing with provenance. Configure the npm trusted publisher for repository `aduverger/pi-rex`, workflow `publish.yml`, and GitHub environment `npm`. Dispatch with `dry_run: true` to verify release gates without publishing; actual publication requires `dry_run: false`. Supply a unique `run_nonce` to identify the run and choose the npm dist-tag (`next` by default). Unlike `make release`, this workflow publishes the checked-out package version without bumping it or creating a Git tag.
