@@ -1,6 +1,6 @@
 {
   "name": "@aduverger/pi-rex",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Compact, foldable Pi tool output in Rex on iOS.",
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -14,7 +14,6 @@
     "type": "git",
     "url": "git+https://github.com/aduverger/pi-rex.git"
   },
-  "homepage": "https://github.com/aduverger/pi-rex#readme",
   "homepage": "https://github.com/aduverger/pi-rex#readme",
   "bugs": {
     "url": "https://github.com/aduverger/pi-rex/issues"
@@ -50,6 +49,8 @@
     "access": "public"
   },
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": [
+      "./src/index.ts"
+    ]
   }
 }
