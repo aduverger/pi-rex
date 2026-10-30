@@ -4,24 +4,25 @@ import {
   createBashToolDefinition, createEditToolDefinition, createReadToolDefinition,
   createWriteToolDefinition, initTheme, ToolExecutionComponent, type Theme, type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { MouseRegion, Text, stripTerminalSequences, visibleWidth, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { Container, MouseRegion, ScrollView, Text, sliceByColumn, stripTerminalSequences, visibleWidth, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { compactToolRenderer } from "../src/render.ts";
 import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
+import { renderLayoutFrame } from "../node_modules/@earendil-works/pi-tui/dist/layout.js";
 
 initTheme("dark", false);
 const ui = { requestRender() {} } as TUI;
 const plain = (component: ToolExecutionComponent, width = 40) => component.render(width).map(stripTerminalSequences);
 function content(component: ToolExecutionComponent, width = 40) {
   const lines = plain(component, width);
-  const body = lines[1]?.startsWith("╭") ? lines.slice(2, -1).map((line) => line.slice(1, -1)) : lines;
+  const body = lines[1]?.startsWith("╭") ? lines.slice(2, -1).map((line) => line.slice(1, -2)) : lines;
   return body.filter((line) => line.trim());
 }
 
 function frameBody(component: ToolExecutionComponent, width = 40) {
   const side = rendererTheme().fg("dim", "│");
   return component.render(width).slice(2, -1).map((line) => {
-    assert.ok(line.startsWith(side) && line.endsWith(side));
-    return line.slice(side.length, -side.length);
+    assert.ok(line.startsWith(side) && line.endsWith(side + " "));
+    return line.slice(side.length, -(side.length + 1));
   });
 }
 
@@ -84,9 +85,9 @@ for (const { name, args, definition, output } of cases) {
       baseline.markExecutionStarted();
       baseline.updateResult(result);
       baseline.setExpanded(true);
-      const native = baseline.render(38);
+      const native = baseline.render(37);
       const body = definition.renderShell === "self" ? native.slice(1) : native.slice(2, -1);
-      assert.deepEqual(frameBody(component), body.map((line) => line + " ".repeat(Math.max(0, 38 - visibleWidth(line)))));
+      assert.deepEqual(frameBody(component), body.map((line) => line + " ".repeat(Math.max(0, 37 - visibleWidth(line)))));
       clickRow(component, name === "bash" ? "$" : name);
       assert.equal(content(component).length, 1);
       setMobile(false);
@@ -106,9 +107,9 @@ test("folded tools share neutral frames without extra padding rows", () => {
     component.updateResult({ content: [{ type: "text", text: "done" }], isError: false });
     const lines = component.render(40);
     assert.equal(lines.length, 4);
-    assert.equal(lines[1], theme.fg("dim", `╭${"─".repeat(38)}╮`));
-    assert.equal(lines.at(-1), theme.fg("dim", `╰${"─".repeat(38)}╯`));
-    assert.ok(lines.slice(1).every((line) => visibleWidth(line) === 40));
+    assert.equal(lines[1], theme.fg("dim", `╭${"─".repeat(37)}╮`) + " ");
+    assert.equal(lines.at(-1), theme.fg("dim", `╰${"─".repeat(37)}╯`) + " ");
+    assert.ok(lines.slice(1).every((line) => visibleWidth(line) === 40 && line.endsWith(" ")));
     setMobile(false);
     assert.ok(!plain(component).some((line) => line.startsWith("╭")));
     setMobile(true);
@@ -119,10 +120,41 @@ test("folded tools share neutral frames without extra padding rows", () => {
 test("frame borders resize safely, including terminals too narrow for a frame", () => {
   const { component } = tool("read", { path: "中文/👩‍💻/long-name.ts" });
   component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
-  for (const width of [40, 12, 5, 1, 2, 3, 4, 20, 40]) {
+  for (const width of [40, 12, 6, 5, 1, 2, 3, 4, 20, 40]) {
     const lines = component.render(width);
     assert.ok(lines.every((line) => visibleWidth(line) <= width));
-    assert.equal(plain(component, width).some((line) => line.startsWith("╭")), width >= 5);
+    assert.equal(plain(component, width).some((line) => line.startsWith("╭")), width >= 6);
+  }
+});
+
+test("Pi's auto scrollbar only covers the gutter, leaving frame corners and contents intact", () => {
+  const { component } = tool("read", { path: "src/中文.ts" });
+  component.updateResult({ content: [{ type: "text", text: "file contents" }], isError: false });
+  const document = new Container();
+  document.addChild(component);
+  document.addChild(new Text("tail\n".repeat(12), 0, 0));
+  const scrollView = new ScrollView(document, { scrollbar: "auto" });
+  const render = () => renderLayoutFrame(scrollView, 40, 8, () => {}).lines.map((line) => {
+    const text = stripTerminalSequences(line);
+    return text + " ".repeat(Math.max(0, 40 - visibleWidth(text)));
+  });
+  try {
+    const hidden = render();
+    scrollView.setScrollbarActive(true);
+    const visible = render();
+    assert.equal(scrollView.isScrollbarVisible, true);
+    assert.ok(visible.some((line) => /[│┃█]/.test(sliceByColumn(line, 39, 1))));
+    assert.deepEqual(visible.map((line) => sliceByColumn(line, 0, 39)), hidden.map((line) => sliceByColumn(line, 0, 39)));
+    const top = visible.findIndex((line) => line.startsWith("╭"));
+    const bottom = visible.findIndex((line) => line.startsWith("╰"));
+    assert.ok(top >= 0 && bottom > top);
+    assert.equal(sliceByColumn(visible[top], 38, 1), "╮");
+    assert.equal(sliceByColumn(visible[bottom], 38, 1), "╯");
+    scrollView.setScrollbarActive(false);
+    scrollView.setScrollbar("hidden");
+    assert.deepEqual(render(), hidden);
+  } finally {
+    scrollView.setScrollbar("hidden");
   }
 });
 
@@ -133,7 +165,7 @@ test("frame colors follow Pi theme changes", () => {
   try {
     initTheme("light", false);
     component.invalidate();
-    assert.equal(component.render(40)[1], rendererTheme().fg("dim", `╭${"─".repeat(38)}╮`));
+    assert.equal(component.render(40)[1], rendererTheme().fg("dim", `╭${"─".repeat(37)}╮`) + " ");
     assert.notEqual(component.render(40)[1], darkBorder);
   } finally {
     initTheme("dark", false);
@@ -166,7 +198,7 @@ test("frames forward custom child mouse coordinates and focus unchanged", () => 
   tapControl();
   assert.equal(seen[0].x, 1);
   assert.equal(seen[0].y, 0);
-  assert.equal(seen[0].width, 38);
+  assert.equal(seen[0].width, 37);
   assert.equal(seen[0].height, 1);
   setMobile(false);
   tapControl();

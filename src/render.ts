@@ -33,30 +33,34 @@ class ToolFrame implements Component {
   }
 
   render(width: number): string[] {
-    if (width < 5) return this.content.render(width).map((line) => truncateToWidth(line, width, ""));
-    const innerWidth = width - 2;
+    const frameWidth = width - 1;
+    if (frameWidth <= 0) return [];
+    if (frameWidth < 5) return this.content.render(frameWidth).map((line) => truncateToWidth(line, frameWidth, "") + " ");
+    const innerWidth = frameWidth - 2;
     const lines = this.content.render(innerWidth);
     if (!lines.length) return [];
     const body = this.replacePadding ? lines.slice(1, -1) : lines;
     const side = this.theme.fg("dim", "│");
     return [
-      this.theme.fg("dim", `╭${"─".repeat(innerWidth)}╮`),
+      this.theme.fg("dim", `╭${"─".repeat(innerWidth)}╮`) + " ",
       ...body.map((line) => {
         const fitted = truncateToWidth(line, innerWidth, "");
-        return `${side}${fitted}${" ".repeat(Math.max(0, innerWidth - visibleWidth(fitted)))}${side}`;
+        return `${side}${fitted}${" ".repeat(Math.max(0, innerWidth - visibleWidth(fitted)))}${side} `;
       }),
-      this.theme.fg("dim", `╰${"─".repeat(innerWidth)}╯`),
+      this.theme.fg("dim", `╰${"─".repeat(innerWidth)}╯`) + " ",
     ];
   }
 
   handleMouse(event: TuiMouseEvent) {
-    if (event.width < 5) return this.content.handleMouse?.(event);
-    if (event.x <= 0 || event.x >= event.width - 1 || event.y <= 0 || event.y >= event.height - 1) return undefined;
+    const frameWidth = event.width - 1;
+    if (frameWidth <= 0 || event.x >= frameWidth) return undefined;
+    if (frameWidth < 5) return this.content.handleMouse?.({ ...event, width: frameWidth });
+    if (event.x <= 0 || event.x >= frameWidth - 1 || event.y <= 0 || event.y >= event.height - 1) return undefined;
     return this.content.handleMouse?.({
       ...event,
       x: event.x - 1,
       y: event.y - (this.replacePadding ? 0 : 1),
-      width: event.width - 2,
+      width: frameWidth - 2,
       height: event.height - (this.replacePadding ? 0 : 2),
     });
   }

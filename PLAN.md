@@ -41,7 +41,7 @@ Least-confident first:
 
 ## Completed validation
 
-- `npm run check`: strict TypeScript and 25 tests passed.
+- `npm run check`: strict TypeScript and 26 tests passed.
 - Tests use real Pi tool components for read/write/edit/bash rendering, native mouse expansion, desktop handoff, Unicode widths, partial output, and errors. A custom self-rendering tool checks delegated state/detail preservation; codemode itself was not run against a model.
 - Rex CLI fixtures cover owner handoff without resize, unrelated blocks, failed-query recovery, stream exit, missing executable, malformed JSON, non-TUI mode, and idempotent shutdown.
 - Live read-only detection and watcher startup/shutdown passed against the installed Rex server (macOS owner).
@@ -89,7 +89,7 @@ Least-confident first:
 Least-confident first:
 
 1. Preserve all expanded self-rendered content, including its own padding. Its outer frame adds two border rows; trimming it could remove real tool output. Standard shells replace their two blank padding rows instead, and all folded tools have the same three-row frame.
-2. Below five terminal columns, show clipped original content without a border; there is not enough room for a useful padded frame. No width option was added.
+2. Below five columns available for the frame, show clipped original content without a border; there is not enough room for a useful padded frame. The scrollbar gutter reserves one additional column, so a full frame now requires six terminal columns. No width option was added.
 3. Use rounded box-drawing characters in Pi's `dim` theme color. The border is neutral for pending, success, and error states; status remains on the icon and native expanded content.
 4. Inline images remain outside the text frame, as Pi renders them separately. No global image setting, keyboard behavior, or custom child control was changed.
 
@@ -99,6 +99,26 @@ Least-confident first:
 - Tests cover folded height, Unicode widths, resize and tiny-width fallback, theme changes, expansion/refolding, custom child coordinates/focus, failures, and desktop handoff.
 - A real read of `README.md` was executed and its actual result rendered folded and expanded at 48 columns. Both views stayed within the terminal width.
 - No real-device frame-tap check has been performed yet. Rex's existing keyboard-on-tap issue is unchanged; the removed dismissal workaround was not reintroduced.
+
+## Scrollbar gutter
+
+- Reserve one stable blank column to the right of mobile tool frames so Pi's auto-hiding scrollbar cannot overwrite their right edge.
+- Use the reduced inner width for both rendering and mouse forwarding; leave vertical spacing and desktop output unchanged.
+- Keep Pi's scrollbar settings and timing unchanged. Verify actual ScrollView scrollbar overlay preserves the frame before, during, and after scrollbar visibility.
+
+### Gutter decision ledger
+
+Least-confident first:
+
+1. Reserve the column consistently, including while the scrollbar is hidden, to avoid reflow when it appears or disappears. Do not inspect or override Pi's scrollbar setting.
+2. At a one-column viewport there is only room for the gutter, so omit tool content. Other tiny widths retain clipped content and the blank gutter rather than drawing an unusable frame.
+3. Keep the gutter outside the frame background and explicitly render a trailing blank cell. Mouse forwarding uses the same reduced content width and does not forward gutter clicks into custom child controls.
+
+### Gutter validation
+
+- A regression test uses Pi's actual ScrollView/layout renderer, not a simulated scrollbar. The visible scrollbar occupies only the final column; frame corners and the first 39 columns of a 40-column viewport remain unchanged before, during, and after visibility.
+- Native tool success/error styling, fold/expand interactions, Unicode widths, theme changes, custom child mouse coordinates, tiny-width fallback, and desktop output remain covered by the full checks.
+- Visual validation on Rex iOS after `/reload` remains outstanding. The scrollbar still appears normally; this change prevents it from overwriting tool borders, rather than hiding it.
 
 ## Remaining manual validation
 
