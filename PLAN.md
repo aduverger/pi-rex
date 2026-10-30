@@ -1,126 +1,67 @@
-# P0: compact tools in Rex iOS
+# P0: compact tool output in Rex iOS
 
-## Scope
+## Workspace intent: user requirements
 
-- Detect Rex using `REX_SESSION` and `REX_BLOCK`.
-- Read the terminal block owner and identify its client platform.
-- Follow `block_owner_changed`; enable compact rendering only for an iOS owner.
-- Collapse tool content to one summary line; keep Pi's spacing and tap/keyboard expansion. On iOS, folded tools indicate success/error with colored icons and no background; expanded tools retain native backgrounds.
-- Delegate expanded and desktop views to the existing tool renderers, with a generic fallback.
-- Leave reasoning, assistant Markdown, editor, footer, tool execution, and saved messages unchanged.
-- Require fullscreen mode for tapping; do not change terminal settings.
+Make Pi's existing terminal output easier to read on Rex mobile, taking visual inspiration from Bergère and the supplied screenshots—not building a separate chat application.
 
-## Implementation
+- Detect Rex using its session/block context. Mobile mode follows the **terminal block owner**, not where the session started, any attached phone, or terminal dimensions.
+- When an iOS app owns the block, start tools folded to one content line with a name, path/command when available, and running/success/error indication. Keep failures identifiable while folded.
+- Use colored status icons without a folded background. Expanded tools must retain their native backgrounds, output/diff formatting, and existing detail renderers, like edit. This applies across tools, with a generic fallback where no renderer exists.
+- Add neutral frames around folded and expanded tools to distinguish them from prose. Reserve a stable one-column right gutter so Pi's auto-hiding scrollbar cannot overwrite the border.
+- Keep individual expansion/collapse and Pi's keyboard expansion controls. Fullscreen mode is an accepted prerequisite for tapping; do not change that setting automatically.
+- Preserve desktop rendering and leave reasoning, assistant Markdown/code fences, editor, footer, tool execution, and saved messages unchanged.
+- Keep the implementation simple and scoped to presentation.
 
-1. Add the extension entry point and minimal TypeScript/test tooling.
-2. Add a Rex CLI owner watcher, with an initial snapshot and one event-stream process.
-3. Wrap tool renderers: compact mobile calls/results, original expanded details.
-4. Test actual Pi tool components, ownership transitions, detection failure, and cleanup. Smoke-test the installed Rex CLI.
-5. Document installation and limitations. Commit the completed task.
+## Explicit non-goals and rejected approaches
 
-## Validation
+- No separate frontend/server, terminal-output scraping, transcript rewriting, tool re-registration, custom tool-detail views, or nested-call reconstruction. Pi supplies structured tool data; Rex supplies terminal identity and ownership.
+- Tool grouping was discussed and explicitly deferred in favor of frames first. More than five consecutive calls is a possible future rule inspired by Bergère, not a requirement for this branch.
+- Do not remove native backgrounds when expanded. An earlier blanket mobile-background removal was rejected and corrected.
+- Do not reintroduce the keyboard-dismissal experiment. The user tested remote `client.keyboard.hide`, but automatic hide-after-tap caused double taps, keyboard flicker, and screen movement. That commit was reset. Rex's native keyboard-on-tap behavior remains unresolved; no Remote Control setting changes or keyboard actions belong in this feature.
+- Do not hide or retime Pi's scrollbar, redesign other UI, or introduce polling/reconnect workers, retry loops, or speculative configuration.
 
-- One-line tool content at narrow widths, including streaming calls and errors.
-- Expansion preserves existing renderers, result details, and renderer component state.
-- Desktop/iOS handoff, including unchanged terminal dimensions.
-- Missing Rex context, missing CLI, failed queries, ended event stream, and shutdown.
-- Typecheck, automated tests, package contents, and a live read-only Rex smoke test.
-- Rex iOS tap forwarding requires a real-device check; do not claim it without testing.
+## Existing implementation path
 
-## Decision ledger
+- `src/rex.ts`: resolve Rex context, query the block owner/client platform, and subscribe to ownership changes through the CLI.
+- `src/index.ts`: own watcher lifetime, switch mobile presentation on ownership changes, and invalidate existing tool components.
+- `src/render.ts`: wrap Pi's renderer resolver, preserve delegated component state, and frame mobile tool content while leaving execution/results intact.
+- Pi creates a component per tool and owns its expansion state. The wrapper uses Pi's self-rendering shell support plus Box/Container, not private TUI mutation. HTML export resolves call/result renderers separately, so standalone result rendering must remain usable.
 
-Least-confident first:
+## Operating choices introduced by the implementation
 
-1. Initially kept Pi's existing tool framing and spacing. “One line” means one visible content line. The background choice was superseded by the styling feedback below; spacing is still unchanged.
-2. Inline images remain controlled by Pi, because its tool-image display sits outside the text renderer. P0 folds tool text/code, not image attachments. This limitation is documented rather than changing global image settings.
-3. Reuse native per-row expansion. Entering mobile mode collapses Pi's global tool preference, and leaving restores the previous preference. Individually opened rows remain subject to Pi's normal behavior; no separate expansion-state store was added.
-4. If the event stream exits, restore normal rendering and require `/reload` to watch again. Query failures can recover on a later owner-change event. No polling, reconnect worker, or retries were added.
-5. An iOS owner must report both `kind: app` and `platform: ios`. Unknown owners/platforms and failed queries use normal rendering. Use Rex's supplied binary directory when available and never auto-start a server.
-6. Bound each CLI query to a two-second connection timeout, a 2.5-second subprocess timeout, and 1 MiB of JSON output. These keep a broken CLI from hanging detection; failures use ordinary rendering.
-7. Tests use Node's built-in test runner and Pi 1.4.0 development dependencies, with no additional test framework. The package has only host-provided peer dependencies at runtime.
+These are retained design decisions, not additional user requirements:
 
-## Completed validation
+- Require client `kind: app` and `platform: ios`; unknown ownership/platform or failed queries use ordinary rendering. Prefer `REX_BIN_DIR` when supplied.
+- Never auto-start a Rex server. CLI reads use a two-second connection timeout, 2.5-second process timeout, and 1 MiB output limit. Abort pending reads and stop the event process on shutdown.
+- Use one event-stream process only in TUI mode. Take an initial snapshot and refresh after the first stream event to close the startup subscription gap. Discard stale asynchronous query results.
+- If the stream ends, restore normal presentation and require `/reload`; a failed query can recover on a later owner event. No automatic reconnection is implemented.
+- Entering mobile mode saves the global tool-expansion preference and collapses it; leaving restores that preference. Individual row choices otherwise follow Pi's behavior. No independent expansion store or persisted derived state is added.
+- Expanded custom self-rendered tools retain their padding, even if framing adds two rows. Standard shells replace their blank vertical padding with border rows. Folded tools share a three-row frame plus Pi's existing separator.
+- Borders use rounded box-drawing characters and Pi's `dim` theme token. The gutter is always reserved to avoid reflow. Below six terminal columns, use clipped content without a frame; at one column there is no room beyond the gutter.
+- Inline images remain under Pi's image-display setting and outside the text frame. The wrapper does not change global image settings.
+- The package uses host-provided Pi peer dependencies and Node's built-in test runner, with Pi 1.4.0 pinned for development. No runtime dependency bundle or extra test framework is added.
 
-- `npm run check`: strict TypeScript and 26 tests passed.
-- Tests use real Pi tool components for read/write/edit/bash rendering, native mouse expansion, desktop handoff, Unicode widths, partial output, and errors. A custom self-rendering tool checks delegated state/detail preservation; codemode itself was not run against a model.
-- Rex CLI fixtures cover owner handoff without resize, unrelated blocks, failed-query recovery, stream exit, missing executable, malformed JSON, non-TUI mode, and idempotent shutdown.
-- Live read-only detection and watcher startup/shutdown passed against the installed Rex server (macOS owner).
-- A disposable Rex session confirmed the actual `block_owner_changed` JSON schema, including owner release. The disposable session was removed.
-- Pi's actual extension loader loaded `src/index.ts` without errors, registering one renderer resolver and the two lifecycle handlers.
-- `npm pack --dry-run` and `git diff --check` passed.
-- `npm audit --omit=dev`: zero vulnerabilities. The full development dependency tree reports advisories through Pi 1.4.0's `undici` dependency. An attempted dependency update was blocked by auto mode and was not retried.
+## Validation and release prerequisites
 
-## Styling feedback: icon-only status
+- Standard validation: `npm run check` (strict TypeScript plus 26 Node tests), `git diff --check`, and `npm pack --dry-run`.
+- Renderer tests use actual Pi tool components for successful/failed read/write/edit/bash, native detail delegation, folding, ANSI styling, Unicode widths, resize/tiny-width fallback, themes, custom child mouse coordinates/focus, and desktop handoff. A custom self-rendering tool checks the codemode-style delegation path; codemode has not been exercised against a model.
+- The scrollbar regression uses Pi's actual ScrollView/layout renderer to verify that visible scrollbar cells do not overwrite the frame and that visibility changes do not reflow it.
+- CLI fixtures cover ownership changes without resize, unrelated blocks, query failure/recovery, stream exit, missing CLI, malformed JSON, non-TUI startup, and idempotent shutdown.
+- Earlier implementation checks included live read-only Rex detection/watcher cleanup, real ownership-event JSON from a disposable session (removed afterward), Pi's extension loader, and rendering an actual README read result folded/expanded.
+- The user approved the frame's appearance on Rex iOS. Final gutter appearance and frame interactions after `/reload`, including desktop handoff, still require device validation. Do not claim the keyboard issue is fixed.
+- The production-only dependency audit previously reported zero vulnerabilities. Pi 1.4.0's development tree has known `undici` advisories; a dependency update was denied and was not retried. Dependency changes are not part of this simplification.
 
-- Initially removed native status-colored backgrounds on iOS, including while expanded. This was too broad and is corrected below. Collapsed error text remains neutral; the tick/cross alone carries success/error color.
-- Reused Pi's public self-rendering shell support and `Box`/`Container` components to keep existing spacing and native desktop backgrounds. No global theme changes or ANSI background-stripping hacks.
-- Desktop handoff tests now compare raw ANSI output against native Pi components. Regression checks cover pending/success/error backgrounds, icon colors, expansion, switching back to mobile, and preserving results through Pi's actual HTML exporter.
+## Review disposition needed
 
-### Styling decision ledger
+- **Desktop fallback parity:** inside Rex, tools without native renderers are still wrapped on desktop. A read-only comparison with Pi's native unknown-tool component confirmed different fallback formatting (including header spacing). This conflicts with the unchanged-desktop goal. Preserve it for review disposition rather than silently changing existing branch behavior during simplification.
+- The resolver also participates in HTML export inside Rex; preserving result content is tested, but native export-style parity is not established. The mode, image, padding, and expansion assumptions above should not be mistaken for user-mandated implementation mechanisms.
+- Tests importing pinned Pi internals or asserting private layout structure are left for the Test phase; those assertions do not define a public compatibility contract.
 
-Least-confident first:
-
-1. Preserve syntax/diff colors in expanded details and custom tools' own self-rendered content. The request changes tool-level status highlighting, not the meaning of code or diff colors.
-2. Remove pending tool backgrounds as well as green/red completion backgrounds only while folded. Expanded tools retain Pi's native pending/success/error backgrounds.
-3. Retain existing spacing; changing row density is outside this feedback.
-4. Keep separately resolved result renderers usable without a call frame, because Pi's HTML exporter resolves the two slots independently. The shared frame is only needed for the interactive tool shell.
-
-## Correction: all tools follow edit's folding behavior
-
-- Use the same folded predicate for summary rendering and background suppression: mobile and not expanded.
-- Preserve native expanded output for every tool, including backgrounds. Leave tools with their own shell, such as edit, delegated to that shell.
-- Tests compare raw ANSI output against native Pi for successful and failed read/write/edit/bash calls, not just text without color. Pending expansion, refolding, generic tools, HTML export, and desktop handoff remain covered.
-
-### Correction decision ledger
-
-1. Keep pending backgrounds when expanded as well as success/error backgrounds: this follows the existing requirement to preserve native expanded views.
-2. No new tool-specific rules or abstractions; the correction only narrows background suppression to the existing folded state.
-
-## Mobile tool frames
-
-- Draw a neutral, rounded border around each folded or expanded tool on iOS.
-- Reuse the existing frame content and native expanded renderers. Replace the standard shell's vertical padding with border rows; preserve custom self-rendered content without trimming it.
-- Forward mouse coordinates through the border so existing expansion and custom child controls keep working.
-- Leave desktop rendering, tool execution, keyboard behavior, and saved messages unchanged. No grouping in this change.
-- Validate native contents/backgrounds at the reduced inner width, narrow Unicode layouts, mouse propagation, resizing, and desktop handoff.
-
-### Frame decision ledger
+## Simplification decision ledger
 
 Least-confident first:
 
-1. Preserve all expanded self-rendered content, including its own padding. Its outer frame adds two border rows; trimming it could remove real tool output. Standard shells replace their two blank padding rows instead, and all folded tools have the same three-row frame.
-2. Below five columns available for the frame, show clipped original content without a border; there is not enough room for a useful padded frame. The scrollbar gutter reserves one additional column, so a full frame now requires six terminal columns. No width option was added.
-3. Use rounded box-drawing characters in Pi's `dim` theme color. The border is neutral for pending, success, and error states; status remains on the icon and native expanded content.
-4. Inline images remain outside the text frame, as Pi renders them separately. No global image setting, keyboard behavior, or custom child control was changed.
-
-### Frame validation
-
-- Native read/write/edit/bash success and error contents retain their ANSI styling at the reduced inner width. Desktop output still matches native Pi exactly.
-- Tests cover folded height, Unicode widths, resize and tiny-width fallback, theme changes, expansion/refolding, custom child coordinates/focus, failures, and desktop handoff.
-- A real read of `README.md` was executed and its actual result rendered folded and expanded at 48 columns. Both views stayed within the terminal width.
-- No real-device frame-tap check has been performed yet. Rex's existing keyboard-on-tap issue is unchanged; the removed dismissal workaround was not reintroduced.
-
-## Scrollbar gutter
-
-- Reserve one stable blank column to the right of mobile tool frames so Pi's auto-hiding scrollbar cannot overwrite their right edge.
-- Use the reduced inner width for both rendering and mouse forwarding; leave vertical spacing and desktop output unchanged.
-- Keep Pi's scrollbar settings and timing unchanged. Verify actual ScrollView scrollbar overlay preserves the frame before, during, and after scrollbar visibility.
-
-### Gutter decision ledger
-
-Least-confident first:
-
-1. Reserve the column consistently, including while the scrollbar is hidden, to avoid reflow when it appears or disappears. Do not inspect or override Pi's scrollbar setting.
-2. At a one-column viewport there is only room for the gutter, so omit tool content. Other tiny widths retain clipped content and the blank gutter rather than drawing an unusable frame.
-3. Keep the gutter outside the frame background and explicitly render a trailing blank cell. Mouse forwarding uses the same reduced content width and does not forward gutter clicks into custom child controls.
-
-### Gutter validation
-
-- A regression test uses Pi's actual ScrollView/layout renderer, not a simulated scrollbar. The visible scrollbar occupies only the final column; frame corners and the first 39 columns of a 40-column viewport remain unchanged before, during, and after visibility.
-- Native tool success/error styling, fold/expand interactions, Unicode widths, theme changes, custom child mouse coordinates, tiny-width fallback, and desktop output remain covered by the full checks.
-- Visual validation on Rex iOS after `/reload` remains outstanding. The scrollbar still appears normally; this change prevents it from overwriting tool borders, rather than hiding it.
-
-## Remaining manual validation
-
-- Test on Rex iOS: open an existing Pi session, take block ownership, tap a completed tool to expand/collapse, and hand ownership back to desktop.
-- No global Pi installation/settings changes, npm publication, or remote push were performed.
+1. Retain the owner watcher, delegated-renderer caches, redraw registry, and frame component: they address real ownership handoff, native renderer reuse, and border/mouse geometry requirements. Removing them would change behavior rather than simplify equivalent mechanics.
+2. Consolidate icon, foreground, and shell-background selection into one presentation rule, preserving partial-before-error precedence and all existing theme tokens.
+3. Inline the one-use summary component instead of retaining a callback-only class. Its text must still be evaluated when drawn because Pi invokes the result renderer after the call renderer, supplying the cached error text later.
+4. Replace the iterative plan history with this current intent, explicit non-goals, retained choices, validation limits, and review concerns. No product behavior, public API, dependency, or test-curation change is intended. Do not commit during the pi-ship simplification phase.

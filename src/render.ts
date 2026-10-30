@@ -2,7 +2,6 @@ import type { Theme, ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Text, stripTerminalSequences, truncateToWidth, visibleWidth, type Component, type TuiMouseEvent } from "@earendil-works/pi-tui";
 
 type RenderContext = Parameters<NonNullable<ToolRenderers["renderCall"]>>[2];
-type Result = Parameters<NonNullable<ToolRenderers["renderResult"]>>[0];
 
 const empty: Component = { render: () => [], invalidate() {} };
 
@@ -10,15 +9,14 @@ function singleLine(text: string): string {
   return stripTerminalSequences(text).replace(/[\x00-\x1f\x7f-\x9f\s]+/g, " ").trim();
 }
 
-class Summary implements Component {
-  constructor(text: () => string) {
-    this.text = text;
+function toolAppearance(context: RenderContext) {
+  if (context.isPartial) {
+    return { icon: "◌", foreground: "muted", background: "toolPendingBg" } as const;
   }
-  private text: () => string;
-  render(width: number): string[] {
-    return [truncateToWidth(this.text(), width)];
+  if (context.isError) {
+    return { icon: "✗", foreground: "error", background: "toolErrorBg" } as const;
   }
-  invalidate() {}
+  return { icon: "✓", foreground: "success", background: "toolSuccessBg" } as const;
 }
 
 class ToolFrame implements Component {
@@ -93,11 +91,10 @@ export function compactToolRenderer(
 
   function summary(args: unknown, theme: Theme, context: RenderContext) {
     const params = args && typeof args === "object" ? args as Record<string, unknown> : {};
-    const status = context.isPartial ? "◌" : context.isError ? "✗" : "✓";
-    const color = context.isPartial ? "muted" : context.isError ? "error" : "success";
+    const appearance = toolAppearance(context);
     const label = [params.path, params.file_path, params.command].find((value) => typeof value === "string");
     const error = context.isError ? state(context).error : undefined;
-    return `${theme.fg("dim", "›")} ${theme.fg(color, status)} ${theme.bold(singleLine(name))}` +
+    return `${theme.fg("dim", "›")} ${theme.fg(appearance.foreground, appearance.icon)} ${theme.bold(singleLine(name))}` +
       (typeof label === "string" ? ` ${singleLine(label)}` : "") +
       (error ? ` — ${singleLine(error)}` : "");
   }
@@ -108,13 +105,18 @@ export function compactToolRenderer(
       track(context);
       const cached = state(context);
       const folded = isMobile() && !context.expanded;
-      const background = context.isPartial ? "toolPendingBg" : context.isError ? "toolErrorBg" : "toolSuccessBg";
+      const background = toolAppearance(context).background;
+      const backgroundStyle = folded ? undefined : (text: string) => theme.bg(background, text);
       const selfRendered = original?.renderShell === "self" && !folded;
       cached.frame = selfRendered
         ? new Container()
-        : new Box(context.outputPad, 1, folded ? undefined : (text) => theme.bg(background, text));
+        : new Box(context.outputPad, 1, backgroundStyle);
       if (folded) {
-        cached.frame.addChild(new Summary(() => summary(args, theme, context)));
+        // Pi supplies the result after renderCall; read its cached error when drawing.
+        cached.frame.addChild({
+          render: (width) => [truncateToWidth(summary(args, theme, context), width)],
+          invalidate() {},
+        });
       } else {
         cached.call = original?.renderCall
           ? original.renderCall(args, theme, { ...context, lastComponent: cached.call })
@@ -123,7 +125,7 @@ export function compactToolRenderer(
       }
       return isMobile() ? new ToolFrame(cached.frame, theme, !selfRendered) : cached.frame;
     },
-    renderResult(result: Result, options, theme, context) {
+    renderResult(result, options, theme, context) {
       track(context);
       const cached = state(context);
       const errorBlock = context.isError
