@@ -8,6 +8,7 @@ import { Container, MouseRegion, ScrollView, Text, getCapabilities, setCapabilit
 import { compactToolRenderer } from "../src/render.ts";
 import { createToolHtmlRenderer } from "../node_modules/@earendil-works/pi-coding-agent/dist/core/export-html/tool-renderer.js";
 import { renderLayoutFrame } from "../node_modules/@earendil-works/pi-tui/dist/layout.js";
+import { extractSegments } from "../node_modules/@earendil-works/pi-tui/dist/utils.js";
 
 initTheme("dark", false);
 const ui = { requestRender() {} } as TUI;
@@ -18,11 +19,19 @@ function content(component: ToolExecutionComponent, width = 40) {
   return body.filter((line) => line.trim());
 }
 
+function styledCells(line: string, width: number) {
+  // Pi's ANSI tracker resolves inherited styles, independent of how resets are encoded.
+  return Array.from({ length: width }, (_, column) => extractSegments(line, column, column, 1).after || " ");
+}
+
 function frameBody(component: ToolExecutionComponent, width = 40) {
-  const side = rendererTheme().fg("dim", "│");
+  const side = styledCells(rendererTheme().fg("dim", "│"), 1)[0];
   return component.render(width).slice(2, -1).map((line) => {
-    assert.ok(line.startsWith(side) && line.endsWith(side + " "));
-    return line.slice(side.length, -(side.length + 1));
+    const cells = styledCells(line, width);
+    assert.equal(cells[0], side);
+    assert.equal(cells.at(-2), side);
+    assert.equal(cells.at(-1), " ");
+    return cells.slice(1, -2);
   });
 }
 
@@ -87,7 +96,7 @@ for (const { name, args, definition, output } of cases) {
       baseline.setExpanded(true);
       const native = baseline.render(37);
       const body = definition.renderShell === "self" ? native.slice(1) : native.slice(2, -1);
-      assert.deepEqual(frameBody(component), body.map((line) => line + "\x1b[0m" + " ".repeat(Math.max(0, 37 - visibleWidth(line)))));
+      assert.deepEqual(frameBody(component), body.map((line) => styledCells(line, 37)));
       clickRow(component, name === "bash" ? "$" : name);
       assert.equal(content(component).length, 1);
       setMobile(false);
@@ -137,17 +146,29 @@ test("wrapped edit highlighting stays inside the frame, including after resizing
     const lines = component.render(width);
     const wrapped = lines.find((line) => line.includes("\x1b[7m") && !line.includes("\x1b[27m"));
     assert.ok(wrapped, "fixture must wrap before the inverse highlight closes");
-    assert.ok(wrapped.endsWith("\x1b[0m" + rendererTheme().fg("dim", "│") + " "));
-    assert.deepEqual(frameBody(component, width), native.render(width - 3).slice(1).map((line) =>
-      line + "\x1b[0m" + " ".repeat(Math.max(0, width - 3 - visibleWidth(line)))));
+    assert.deepEqual(frameBody(component, width), native.render(width - 3).slice(1).map((line) => styledCells(line, width - 3)));
     assert.ok(lines.every((line) => visibleWidth(line) <= width));
   }
-  assert.ok(component.render(5).slice(1).every((line) => line.endsWith("\x1b[0m ")));
+  assert.ok(component.render(5).slice(1).every((line) => styledCells(line, 5).at(-1) === " "));
   component.setExpanded(false);
   assert.doesNotMatch(component.render(40).join("\n"), /\x1b\[7m/);
   component.setExpanded(true);
   setMobile(false);
   assert.deepEqual(component.render(40), native.render(40));
+});
+
+test("short custom tool highlights do not color frame padding or the narrow gutter", () => {
+  const { component } = tool("custom_tool", {}, {
+    renderShell: "self",
+    renderCall: () => ({ render: () => ["\x1b[7mhi"], invalidate() {} }),
+  });
+  component.setExpanded(true);
+  const [body] = frameBody(component, 20);
+  assert.deepEqual(body.slice(0, 2), styledCells("\x1b[7mhi", 2));
+  assert.ok(body.slice(2).every((cell) => cell === " "));
+  const narrow = styledCells(component.render(5)[1], 5);
+  assert.deepEqual(narrow.slice(0, 2), styledCells("\x1b[7mhi", 2));
+  assert.ok(narrow.slice(2).every((cell) => cell === " "));
 });
 
 test("Pi's auto scrollbar only covers the gutter, leaving frame corners and contents intact", () => {
@@ -367,7 +388,7 @@ test("generic fallbacks match native formatting, sanitization, previews, and ima
       setMobile(true);
       if (expanded) {
         const nativeBody = baseline.render(37).slice(2, -1);
-        assert.deepEqual(frameBody(component), nativeBody.map((line) => line + "\x1b[0m" + " ".repeat(Math.max(0, 37 - visibleWidth(line)))));
+        assert.deepEqual(frameBody(component), nativeBody.map((line) => styledCells(line, 37)));
         if (!definition?.renderResult) assert.match(content(component).join("\n"), /image\/png/);
       } else {
         assert.equal(content(component).length, 1);
