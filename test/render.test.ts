@@ -73,7 +73,7 @@ for (const { name, args, definition, output } of cases) {
   for (const isError of [false, true]) {
     test(`${name} ${isError ? "error" : "success"}: folded content is neutral, expanded and desktop views match native Pi`, () => {
       const { component, setMobile } = tool(name, args, definition);
-      const result = { content: [{ type: "text", text: isError ? "Tool failed" : output }], details: undefined, isError };
+      const result = { content: [{ type: "text", text: isError ? "Tool failed" : output }], details: undefined, isError, durationMs: 42 };
       component.updateResult(result);
       const saved = structuredClone(result);
       assert.equal(content(component).length, 1);
@@ -298,6 +298,71 @@ test("HTML exports retain results when call and result renderers are resolved in
     const result = html.renderResult("call:export", "custom_tool", [{ type: "text", text: "preserved result" }], undefined, false);
     assert.match(result?.expanded ?? "", /preserved result/);
   }
+});
+
+test("generic fallbacks match native formatting, sanitization, previews, and image placeholders", () => {
+  const args = { query: "example", options: { limit: 20 } };
+  const result = {
+    content: [
+      { type: "text", text: "remote\x1b[2J\x1b]52;c;ZXhhbXBsZQ==\x07text\n" + Array.from({ length: 20 }, (_, i) => `line ${i}`).join("\n") },
+      { type: "image", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lXcAAAAASUVORK5CYII=", mimeType: "image/png" },
+    ],
+    isError: false,
+  };
+  const definitions: (ToolRenderers | undefined)[] = [
+    undefined,
+    {},
+    { renderCall: () => new Text("custom call", 0, 0) },
+    { renderResult: () => new Text("custom result", 0, 0) },
+  ];
+  for (const definition of definitions) {
+    const { component, setMobile } = tool("external_tool", args, definition);
+    component.updateResult(result);
+    const baseline = new ToolExecutionComponent("external_tool", "native", args, { showImages: false }, definition, ui, process.cwd());
+    baseline.updateResult(result);
+    for (const expanded of [false, true]) {
+      setMobile(false);
+      component.setExpanded(expanded);
+      baseline.setExpanded(expanded);
+      assert.deepEqual(component.render(60), baseline.render(60));
+      assert.doesNotMatch(component.render(60).join("\n"), /\x1b\[2J|\x1b\]52;/);
+      setMobile(true);
+      if (expanded) {
+        const nativeBody = baseline.render(37).slice(2, -1);
+        assert.deepEqual(frameBody(component), nativeBody.map((line) => line + " ".repeat(Math.max(0, 37 - visibleWidth(line)))));
+        if (!definition?.renderResult) assert.match(content(component).join("\n"), /image\/png/);
+      } else {
+        assert.equal(content(component).length, 1);
+        assert.doesNotMatch(content(component).join("\n"), /remote|line 0/);
+      }
+    }
+  }
+});
+
+test("native streaming timers stop when the tool completes after an iOS handoff", (t) => {
+  t.mock.timers.enable({ apis: ["setInterval"] });
+  let redraws = 0;
+  let mobile = false;
+  const renderer = compactToolRenderer("bash", createBashToolDefinition(process.cwd()) as ToolRenderers, () => mobile, () => {});
+  const component = new ToolExecutionComponent("bash", "streaming", { command: "long task" }, { showImages: false }, renderer, {
+    requestRender() { redraws++; },
+  } as TUI, process.cwd());
+  component.setArgsComplete();
+  component.markExecutionStarted();
+  component.updateResult({ content: [{ type: "text", text: "progress" }], isError: false }, true);
+  const beforeTick = redraws;
+  t.mock.timers.tick(1000);
+  assert.ok(redraws > beforeTick, "native streaming timer should request redraws");
+  mobile = true;
+  component.invalidate();
+  component.updateResult({ content: [{ type: "text", text: "finished output" }], isError: false, durationMs: 1000 });
+  assert.equal(content(component).length, 1);
+  assert.match(content(component)[0], /✓/);
+  const afterCompletion = redraws;
+  t.mock.timers.tick(3000);
+  assert.equal(redraws, afterCompletion, "completed hidden tools must stop periodic redraws");
+  component.setExpanded(true);
+  assert.match(content(component).join("\n"), /finished output/);
 });
 
 test("unknown tools have an expandable raw argument/result fallback", () => {

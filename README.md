@@ -25,7 +25,7 @@ Tested with Pi 1.4.0 and Rex server `0.0.1793231964-ga3e149`. Use Pi's fullscree
 - Uses `REX_SESSION` and `REX_BLOCK` to find the terminal, then checks its owner's client platform. A connected phone alone does not activate mobile mode.
 - Follows Rex's `block_owner_changed` event, including handoffs where terminal dimensions stay the same.
 - On iOS, each tool has a neutral rounded frame with a one-column right gutter for Pi's scrollbar, and starts folded to one summary line: status, tool name, and path or command when available. Errors include their first nonempty text line, space permitting. When folded, only the tick/cross carries success/error color and there is no tool background. Expanded tools retain their native backgrounds and code/diff highlighting. Standard blank padding becomes border rows; custom self-rendered details keep their own padding.
-- Tap a tool row to expand or collapse it. Pi's tool-expansion shortcut still works. Expanded views reuse the existing renderers, including codemode's own detail view. Tools without renderers show raw arguments and text results.
+- Tap a tool row to expand or collapse it. Pi's tool-expansion shortcut still works. Expanded views reuse the existing renderers, including codemode's own detail view. Tools without renderers use Pi's native fallback, including sanitized output, argument formatting, previews, and image placeholders.
 - Restores normal rendering on desktop handoff. The global expansion preference from before mobile mode is restored; Pi retains individual row choices unless its global expansion control resets them.
 - Does not change reasoning, assistant Markdown, editor, footer, tool execution, or saved messages.
 
@@ -36,6 +36,7 @@ Outside Rex, the extension does nothing. RPC, print, and JSON modes do not start
 - The new frame's interaction on Rex iOS still needs device validation. Automated tests exercise Pi's actual tool components and normalized mouse clicks, not the iOS app.
 - Inline images remain under Pi's own image-display setting; they are not hidden or enclosed by the text-tool frame.
 - No separate nested-call reconstruction or custom tool-detail views.
+- HTML exports made during iOS ownership can omit custom-tool arguments from the visible call header. The arguments remain in the embedded session data and JSONL export. Export after desktop handoff or use JSONL; a reliable terminal/export distinction requires upstream Pi support.
 
 ## Develop
 

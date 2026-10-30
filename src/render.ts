@@ -1,9 +1,52 @@
-import type { Theme, ToolRenderers } from "@earendil-works/pi-coding-agent";
-import { Box, Container, Text, stripTerminalSequences, truncateToWidth, visibleWidth, type Component, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { ToolExecutionComponent, type Theme, type ToolRenderers, type ToolRenderResultOptions } from "@earendil-works/pi-coding-agent";
+import { Box, Container, getCapabilities, stripTerminalSequences, truncateToWidth, visibleWidth, type Component, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 
 type RenderContext = Parameters<NonNullable<ToolRenderers["renderCall"]>>[2];
 
 const empty: Component = { render: () => [], invalidate() {} };
+type ToolResult = Parameters<NonNullable<ToolRenderers["renderResult"]>>[0];
+
+class NativeFallback implements Component {
+  private tool: ToolExecutionComponent;
+
+  constructor(name: string, original: ToolRenderers | undefined, context: RenderContext, resultOnly: boolean) {
+    // Pi supplies only the missing slots; real custom renderers still receive the original context.
+    const definition = original || resultOnly ? {
+      renderShell: "self" as const,
+      renderCall: original?.renderCall || resultOnly ? () => empty : undefined,
+      renderResult: original?.renderResult ? () => empty : undefined,
+    } : undefined;
+    this.tool = new ToolExecutionComponent(name, context.toolCallId, context.args, {
+      showImages: context.showImages,
+      outputPad: context.outputPad,
+    }, definition, { requestRender: context.invalidate } as TUI, context.cwd);
+  }
+
+  updateCall(args: unknown, context: RenderContext) {
+    this.tool.updateArgs(args);
+    this.tool.setOutputPad(context.outputPad);
+    this.tool.setShowImages(context.showImages);
+    this.tool.setExpanded(context.expanded);
+  }
+
+  updateResult(result: ToolResult, options: ToolRenderResultOptions, context: RenderContext) {
+    // The outer Pi component owns inline images; keep native placeholders when images are hidden.
+    const content = context.showImages && getCapabilities().images
+      ? result.content.filter((block) => block.type !== "image")
+      : result.content;
+    this.tool.setExpanded(options.expanded);
+    this.tool.updateResult({ ...result, content, isError: context.isError, durationMs: context.durationMs }, options.isPartial);
+  }
+
+  render(width: number) {
+    // Pi's outer tool component already supplies the leading separator.
+    return this.tool.render(width).slice(1);
+  }
+
+  invalidate() {
+    this.tool.invalidate();
+  }
+}
 
 function singleLine(text: string): string {
   return stripTerminalSequences(text).replace(/[\x00-\x1f\x7f-\x9f\s]+/g, " ").trim();
@@ -79,6 +122,7 @@ export function compactToolRenderer(
     result?: Component;
     error?: string;
     frame?: Box | Container;
+    fallback?: NativeFallback;
   }>();
   function state(context: RenderContext) {
     let value = states.get(context.state);
@@ -105,10 +149,17 @@ export function compactToolRenderer(
       track(context);
       const cached = state(context);
       const folded = isMobile() && !context.expanded;
+      if (!original?.renderCall || !original.renderResult) {
+        cached.fallback ??= new NativeFallback(name, original, context, false);
+        cached.fallback.updateCall(args, context);
+      }
+      cached.call = original?.renderCall
+        ? original.renderCall(args, theme, { ...context, lastComponent: cached.call })
+        : cached.fallback;
       const background = toolAppearance(context).background;
       const backgroundStyle = folded ? undefined : (text: string) => theme.bg(background, text);
       const selfRendered = original?.renderShell === "self" && !folded;
-      cached.frame = selfRendered
+      cached.frame = selfRendered || (!original && !folded)
         ? new Container()
         : new Box(context.outputPad, 1, backgroundStyle);
       if (folded) {
@@ -117,10 +168,7 @@ export function compactToolRenderer(
           render: (width) => [truncateToWidth(summary(args, theme, context), width)],
           invalidate() {},
         });
-      } else {
-        cached.call = original?.renderCall
-          ? original.renderCall(args, theme, { ...context, lastComponent: cached.call })
-          : new Text(`${name}\n${JSON.stringify(args, null, 2) ?? ""}`, 0, 0);
+      } else if (cached.call) {
         cached.frame.addChild(cached.call);
       }
       return isMobile() ? new ToolFrame(cached.frame, theme, !selfRendered) : cached.frame;
@@ -134,10 +182,17 @@ export function compactToolRenderer(
       cached.error = errorBlock?.type === "text"
         ? errorBlock.text.split(/\r?\n/).find((line) => line.trim())
         : undefined;
+      if (cached.fallback || !original?.renderResult) {
+        cached.fallback ??= new NativeFallback(name, original, context, true);
+        cached.fallback.updateResult(result, options, context);
+      }
+      if (original?.renderResult) {
+        cached.result = original.renderResult(result, options, theme, { ...context, lastComponent: cached.result });
+      } else {
+        cached.result = original?.renderCall || !cached.frame ? cached.fallback : empty;
+      }
       if (isMobile() && !options.expanded) return empty;
-      cached.result = original?.renderResult
-        ? original.renderResult(result, options, theme, { ...context, lastComponent: cached.result })
-        : new Text(result.content.map((block) => block.type === "text" ? block.text : "").join("\n"), 0, 0);
+      if (!cached.result) return empty;
       if (cached.frame) {
         cached.frame.addChild(cached.result);
         return empty;
