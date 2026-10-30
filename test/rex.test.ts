@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
@@ -34,8 +34,12 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
     queryError: false,
     malformed: false,
     exit: false,
+    holdOwner: "",
   };
-  const save = () => writeFile(join(directory, "state.json"), JSON.stringify(state));
+  async function save() {
+    await writeFile(join(directory, "state.tmp"), JSON.stringify(state));
+    await rename(join(directory, "state.tmp"), join(directory, "state.json"));
+  }
   await save();
   const context = { command, session: "session:test", block: "block:test" };
   async function ownerChanged(block = context.block) {
@@ -115,6 +119,34 @@ test("query failure falls back to normal rendering and a later owner event can r
   assert.deepEqual(transitions, [true, false, true]);
 });
 
+test("a stale iOS owner response cannot override a newer desktop handoff", async (t) => {
+  const f = await fixture(t);
+  f.state.owner = "client:ios";
+  await f.save();
+  const transitions: boolean[] = [];
+  const stop = watchRexOwner(f.context, (mobile) => transitions.push(mobile));
+  t.after(async () => stop());
+  await waitFor(() => transitions.at(-1) === true);
+  f.state.holdOwner = "client:ios";
+  await f.ownerChanged();
+  let heldPid = 0;
+  await waitFor(async () => {
+    try {
+      heldPid = Number(await readFile(join(f.directory, "held-query"), "utf8"));
+      return heldPid > 0;
+    } catch { return false; }
+  });
+  f.state.owner = "client:desktop";
+  await f.ownerChanged();
+  await waitFor(() => transitions.at(-1) === false);
+  await writeFile(join(f.directory, "release-query"), "");
+  await waitFor(() => {
+    try { process.kill(heldPid, 0); return false; } catch { return true; }
+  });
+  await setTimeout(100);
+  assert.deepEqual(transitions, [true, false]);
+});
+
 test("event stream exit restores normal rendering", async (t) => {
   const f = await fixture(t);
   f.state.owner = "client:ios";
@@ -129,7 +161,7 @@ test("event stream exit restores normal rendering", async (t) => {
   assert.deepEqual(transitions, [true, false]);
 });
 
-test("extension starts watching only in TUI mode and restores expansion on shutdown", async (t) => {
+test("extension watches only in TUI mode and restores expansion on handoff and shutdown", async (t) => {
   const f = await fixture(t);
   const handlers = new Map<string, (event: unknown, context: ExtensionContext) => void>();
   let rendererRegistered = false;
@@ -157,13 +189,24 @@ test("extension starts watching only in TUI mode and restores expansion on shutd
       setToolsExpanded: (value: boolean) => { expanded = value; },
     },
   } as ExtensionContext;
-  handlers.get("session_start")!({}, context);
-  await assert.rejects(readFile(join(f.directory, "pid")));
+  for (const mode of ["json", "rpc", "print"] as const) {
+    context.mode = mode;
+    handlers.get("session_start")!({}, context);
+    await setTimeout(100);
+    await assert.rejects(readFile(join(f.directory, "pid")), { code: "ENOENT" });
+    assert.equal(expanded, true);
+  }
   f.state.owner = "client:ios";
   await f.save();
   context.mode = "tui";
   handlers.get("session_start")!({}, context);
   t.after(async () => { handlers.get("session_shutdown")!({}, context); });
+  await waitFor(() => !expanded);
+  f.state.owner = "client:desktop";
+  await f.ownerChanged();
+  await waitFor(() => expanded);
+  f.state.owner = "client:ios";
+  await f.ownerChanged();
   await waitFor(() => !expanded);
   handlers.get("session_shutdown")!({}, context);
   assert.equal(expanded, true);

@@ -55,7 +55,7 @@ These are retained design decisions, not additional user requirements:
 
 - **Desktop fallback parity:** inside Rex, tools without native renderers are still wrapped on desktop. A read-only comparison with Pi's native unknown-tool component confirmed different fallback formatting (including header spacing). This conflicts with the unchanged-desktop goal. Preserve it for review disposition rather than silently changing existing branch behavior during simplification.
 - The resolver also participates in HTML export inside Rex; preserving result content is tested, but native export-style parity is not established. The mode, image, padding, and expansion assumptions above should not be mistaken for user-mandated implementation mechanisms.
-- Tests importing pinned Pi internals or asserting private layout structure are left for the Test phase; those assertions do not define a public compatibility contract.
+- The HTML and scrollbar tests import pinned Pi integration modules because the regressions occur at those boundaries. Those module paths are not public compatibility promises; assertions target retained export content and unchanged visible frame cells.
 
 ## Simplification decision ledger
 
@@ -64,4 +64,55 @@ Least-confident first:
 1. Retain the owner watcher, delegated-renderer caches, redraw registry, and frame component: they address real ownership handoff, native renderer reuse, and border/mouse geometry requirements. Removing them would change behavior rather than simplify equivalent mechanics.
 2. Consolidate icon, foreground, and shell-background selection into one presentation rule, preserving partial-before-error precedence and all existing theme tokens.
 3. Inline the one-use summary component instead of retaining a callback-only class. Its text must still be evaluated when drawn because Pi invokes the result renderer after the call renderer, supplying the cached error text later.
-4. Replace the iterative plan history with this current intent, explicit non-goals, retained choices, validation limits, and review concerns. No product behavior, public API, dependency, or test-curation change is intended. Do not commit during the pi-ship simplification phase.
+4. Replace the iterative plan history with this current intent, explicit non-goals, retained choices, validation limits, and review concerns. No product behavior, public API, or dependency change is intended; pi-ship owns commits.
+
+## Test contracts and counterfactuals
+
+The suite has 26 tests. Each row names wrong observable behavior it should reject and an equivalent implementation change it should tolerate. The native-tool matrix is eight tests; all other rows are individual tests.
+
+| Test | Plausible regression detected | Behavior-preserving refactor tolerated |
+| --- | --- | --- |
+| Read success | A folded read leaks file contents, or expansion loses native highlighting. | Replace the frame implementation while retaining its visible content and styles. |
+| Read error | A failed read looks successful or loses its native expanded error output. | Move status selection into a different helper. |
+| Write success | Write content becomes visible while folded, or its native expanded view changes. | Change how delegated call/result components are stored. |
+| Write error | A failed write lacks its cross or expanded error details. | Reorganize the renderer's shell composition. |
+| Edit success | The self-rendered diff loses native colors or padding when expanded. | Replace the surrounding frame component. |
+| Edit error | A folded edit failure appears successful or expanded failure output is lost. | Consolidate status-theme selection. |
+| Bash success | A successful bash row exposes output while folded or desktop output differs from Pi. | Inline or extract presentation helpers. |
+| Bash error | Failed bash output disappears on expansion or remains wrong after desktop handoff. | Change mobile-mode state storage. |
+| Neutral compact frames | Standard folded tools gain colored padding or extra empty rows, or retain frames on desktop. | Build the same frame without Box/Container. |
+| Auto scrollbar | Showing the scrollbar overwrites a corner or shifts tool text. | Change frame internals while preserving terminal cells. |
+| Theme changes | Existing frames retain dark-theme colors after a switch to light. | Change theme lookup or invalidation mechanics. |
+| Child mouse/focus | A framed custom control receives the wrong click position or loses its focus request. | Rewrite coordinate translation while delivering the same local event. |
+| Streaming and errors | Partial output unfolds the row, or a completed error omits its first message. | Reorganize summary construction and error caching. |
+| Status styling | Pending expansion lacks its native background, or completed folded text is status-colored beyond its icon. | Share or inline icon/background selection. |
+| Unicode and resizing | Narrow terminals overflow or throw; embedded control sequences corrupt the summary. | Change clipping helpers or the exact tiny-width frame cutoff. |
+| Custom interactive details | Folding or owner handoff resets a custom control, mixes call/result state, or drops result details. | Replace wrapper caches while preserving delegated interactive behavior. |
+| HTML results | Independently resolved renderers silently omit expanded exported output. | Change resolver/component caching. |
+| Unknown tools | Tools without renderers cannot reveal their arguments and results on mobile. | Replace fallback components while retaining expandable output. |
+| Rex detection | Narrow non-Rex terminals activate the feature, or a supplied Rex binary directory is ignored. | Reorganize environment parsing. |
+| Owner platform | A connected but non-owning iOS client, CLI client, unknown platform, or missing owner enables mobile mode. | Change how ownership queries are composed. |
+| Ownership events | An unrelated block enables mobile mode, valid handoffs are missed, or stopping leaves mobile mode active. | Rework event dispatch while retaining the callback contract. |
+| Query failure/recovery | A failed query leaves mobile mode active or prevents a later valid handoff. | Replace error-handling helpers. |
+| Stale ownership response | An old iOS response re-enables mobile presentation after a newer desktop handoff. | Replace the revision counter with another stale-response guard. |
+| Stream exit | A dead event stream leaves mobile presentation active. | Reorganize process cleanup. |
+| Extension lifecycle | Non-TUI modes start a watcher, or desktop handoff/shutdown loses the previous expansion preference. | Reorganize lifecycle handlers and watcher storage. |
+| CLI/JSON failures | Missing executables enable mobile mode or malformed ownership JSON is accepted. | Change command-execution plumbing. |
+
+### Test changes and evidence
+
+- Added one stale-response regression using a held CLI response. Removing the stale-response guard made it fail with an erroneous return to mobile mode.
+- Rewrote the custom-state test around two clickable controls and visible counts rather than component identity/type checks. Removing delegated component reuse made it fail when both counts reset after folding.
+- Consolidated the separate resize test into the Unicode/control-sequence test; retained tiny-width and repeated-resize protection without pinning the exact unframed cutoff.
+- Removed duplicate completed-background/desktop comparisons from the status test; the eight native-tool cases retain those checks. The status test retains its distinct pending-background and icon-only-color risks.
+- Extended lifecycle coverage to all three non-TUI modes and a real fixture-driven desktop handoff before shutdown.
+- Fixture state updates are atomic, held responses are explicitly released, and the fixture no longer pins the incidental two-second connection-timeout value. The no-autostart safeguard remains enforced.
+- No production changes were retained. Desktop generic-fallback parity remains the explicit review issue above, not newly blessed expected behavior. Device interactions, final gutter appearance, real codemode integration, and native HTML styling parity remain unverified.
+
+### Test decision ledger
+
+Least-confident first:
+
+1. Retain the pinned HTML/layout integration seams: substituting a mock would miss independent resolver state and actual scrollbar overlay behavior. A Pi dependency upgrade may require changing those imports without changing these contracts.
+2. Keep native-tool output comparisons because preserving native detail formatting is an agreed requirement, not a snapshot of this extension's private implementation.
+3. Consolidate only duplicated protections; keep pending styling, theme changes, child focus/coordinates, export content, and lifecycle failures separate because each detects a distinct user-visible regression.

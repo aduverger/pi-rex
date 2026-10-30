@@ -117,16 +117,6 @@ test("folded tools share neutral frames without extra padding rows", () => {
   }
 });
 
-test("frame borders resize safely, including terminals too narrow for a frame", () => {
-  const { component } = tool("read", { path: "中文/👩‍💻/long-name.ts" });
-  component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
-  for (const width of [40, 12, 6, 5, 1, 2, 3, 4, 20, 40]) {
-    const lines = component.render(width);
-    assert.ok(lines.every((line) => visibleWidth(line) <= width));
-    assert.equal(plain(component, width).some((line) => line.startsWith("╭")), width >= 6);
-  }
-});
-
 test("Pi's auto scrollbar only covers the gutter, leaving frame corners and contents intact", () => {
   const { component } = tool("read", { path: "src/中文.ts" });
   component.updateResult({ content: [{ type: "text", text: "file contents" }], isError: false });
@@ -219,10 +209,10 @@ test("streaming arguments and results stay folded; errors show on the same row",
   assert.doesNotMatch(content(component, 100)[0], /stack trace/);
 });
 
-test("folded mobile status uses colored icons; expanded pending, success, and error backgrounds return", () => {
+test("pending tools regain native backgrounds when expanded; completed status colors stay on the icon", () => {
   const theme = rendererTheme();
   const definition = createBashToolDefinition(process.cwd()) as ToolRenderers;
-  const { component, setMobile } = tool("bash", { command: "npm test" }, definition);
+  const { component } = tool("bash", { command: "npm test" }, definition);
   const background = /\x1b\[(?:4[0-7]|10[0-7]|48[;:])[^m]*m/;
   assert.doesNotMatch(component.render(100).join("\n"), background);
   component.setExpanded(true);
@@ -235,61 +225,62 @@ test("folded mobile status uses colored icons; expanded pending, success, and er
     assert.doesNotMatch(collapsed, background);
     assert.ok(collapsed.includes(theme.fg(isError ? "error" : "success", isError ? "✗" : "✓")));
     if (isError) assert.ok(!collapsed.includes(theme.fg("error", " — Test failed")));
-    clickRow(component, "bash");
-    assert.ok(component.render(100).join("\n").includes(theme.getBgAnsi(isError ? "toolErrorBg" : "toolSuccessBg")));
-    clickRow(component, "$");
-    setMobile(false);
-    const baseline = new ToolExecutionComponent("bash", "call:1", { command: "npm test" }, { showImages: false }, definition, ui, process.cwd());
-    baseline.setArgsComplete();
-    baseline.markExecutionStarted();
-    baseline.updateResult(result);
-    assert.deepEqual(component.render(100), baseline.render(100));
-    assert.match(component.render(100).join("\n"), background);
-    setMobile(true);
-    assert.doesNotMatch(component.render(100).join("\n"), background);
   }
 });
 
-test("narrow Unicode summaries fit the terminal and disarm control sequences", () => {
+test("Unicode summaries survive resizing to tiny widths and disarm control sequences", () => {
   const { component } = tool("read", { path: "中文/👩‍💻/\x1b[31mlong\nfile.ts\x1b[0m" });
   component.updateResult({ content: [{ type: "text", text: "secret output" }], isError: false });
-  for (const width of [8, 20, 40]) {
-    assert.equal(content(component, width).length, 1);
+  for (const width of [40, 12, 6, 5, 1, 2, 3, 4, 20, 40]) {
     assert.ok(component.render(width).every((line) => visibleWidth(line) <= width));
+    if (width >= 12) {
+      assert.equal(content(component, width).length, 1);
+      assert.ok(plain(component, width).some((line) => line.startsWith("╭")));
+    }
   }
   assert.doesNotMatch(content(component, 100)[0], /\x1b|\n|secret output/);
 });
 
-test("custom/codemode renderers retain component caches, details, and native self shells", () => {
+test("custom tool details and interactive state survive folding and owner handoffs", () => {
+  class DetailControl extends MouseRegion {
+    private clicks = 0;
+    constructor(label: string) {
+      const text = new Text(`${label}: 0`, 0, 0);
+      super(text, () => {
+        text.setText(`${label}: ${++this.clicks}`);
+        return { handled: true };
+      });
+    }
+  }
   const details = { nestedCalls: [{ name: "read", status: "success" }] };
-  const seen: unknown[] = [];
   const original: ToolRenderers = {
     renderShell: "self",
-    renderCall(_args, _theme, context) {
-      const component = context.lastComponent ?? new Text("script", 0, 0);
-      assert.ok(component instanceof Text);
-      component.setText(`script ${context.expanded}`);
-      seen.push(component);
-      return component;
-    },
+    renderCall: (_args, _theme, context) => context.lastComponent ?? new DetailControl("script control"),
     renderResult(result, _options, _theme, context) {
-      assert.equal(result.details, details);
-      const component = context.lastComponent ?? new Text("native nested details", 0, 0);
-      assert.ok(component instanceof Text);
-      return component;
+      const nested = result.details.nestedCalls[0];
+      return context.lastComponent ?? new DetailControl(`${nested.name} ${nested.status}`);
     },
   };
   const { component, setMobile } = tool("codemode", { code: "tools.read(...)" }, original);
   component.updateResult({ content: [{ type: "text", text: "result" }], details, isError: false });
   assert.equal(content(component).length, 1);
   clickRow(component, "codemode");
-  assert.match(content(component).join("\n"), /native nested details/);
-  const first = seen.at(-1);
-  setMobile(false);
-  setMobile(true);
-  assert.equal(seen.at(-1), first);
+  clickRow(component, "script control");
+  clickRow(component, "read success");
+  clickRow(component, "read success");
+  const assertDetails = () => {
+    assert.match(content(component).join("\n"), /script control: 1/);
+    assert.match(content(component).join("\n"), /read success: 2/);
+  };
+  assertDetails();
   component.setExpanded(false);
   assert.equal(content(component).length, 1);
+  component.setExpanded(true);
+  assertDetails();
+  setMobile(false);
+  assertDetails();
+  setMobile(true);
+  assertDetails();
 });
 
 test("HTML exports retain results when call and result renderers are resolved independently", () => {
