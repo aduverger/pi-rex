@@ -20,7 +20,7 @@ test("real Rex routes registered actions and caller identity without a separate 
   await receiver.request("client.keymap", { actions: [{ name: "pirex.echo", kind: "client", args: { type: "object" } }] });
   assert.deepEqual(await lab.control.performClient(receiver.id, "pirex.echo", { text: "中文 👩‍💻\nnext" }), { received: { text: "中文 👩‍💻\nnext" } });
   await assert.rejects(lab.control.performClient(receiver.id, "pirex.unknown"), (error: unknown) => error instanceof RexError && error.code === "not_supported");
-  await assert.rejects(lab.control.request("server.version", { text: "x".repeat(lab.control.limit) }), /message limit/);
+  await assert.rejects(lab.control.request("server.version", { text: "x".repeat(lab.control.limit) }), (error: unknown) => error instanceof RexError && error.code === "too_large");
   assert.ok(await lab.control.request("server.version"));
 });
 
@@ -58,7 +58,7 @@ test("real Rex transport: lost acknowledgements are not replayed, explicit retry
   const running = connection.run();
   t.after(async () => { connection.stop(); await running; });
   await waitFor(() => connection.connected && !!connection.state);
-  await assert.rejects(connection.command({ kind: "prompt", text: "One prompt", delivery: "send" }), /uncertain/);
+  await assert.rejects(connection.command({ kind: "prompt", text: "One prompt", delivery: "send" }));
   assert.ok(connection.uncertain);
   await delay(1100);
   assert.equal(deliveries, 1, "background recovery must not replay the prompt");
@@ -66,17 +66,19 @@ test("real Rex transport: lost acknowledgements are not replayed, explicit retry
   assert.equal(deliveries, 1);
   assert.equal(connection.uncertain, undefined);
   loseAcknowledgement = true;
-  await assert.rejects(connection.command({ kind: "prompt", text: "Second prompt", delivery: "send" }), /uncertain/);
+  await assert.rejects(connection.command({ kind: "prompt", text: "Second prompt", delivery: "send" }));
   generation = "after-reload";
   await source.performClient(viewer, "pirex.changed", { generation, revision: deliveries });
   await waitFor(() => connection.state?.generation === generation);
-  await assert.rejects(connection.retry(), /cannot safely be replayed/);
+  await assert.rejects(connection.retry());
+  assert.ok(connection.uncertain);
   assert.equal(deliveries, 2);
   connection.dismissUncertainty();
   await connection.command({ kind: "abort" });
   assert.equal(deliveries, 3);
   source.close();
   await waitFor(() => !connection.connected);
-  await assert.rejects(connection.command({ kind: "prompt", text: "Offline draft", delivery: "send" }), /draft retained/);
+  await assert.rejects(connection.command({ kind: "prompt", text: "Offline draft", delivery: "send" }));
+  assert.equal(connection.uncertain, undefined);
   assert.equal(deliveries, 3);
 });

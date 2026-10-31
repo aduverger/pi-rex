@@ -78,7 +78,7 @@ Implemented on branch `viewer`, from `148918e` (0.1.1). Local runtime: Node 24.1
 
 Passed:
 
-- `PI_TRUE_COLOR=0 make check`: strict TypeScript, **44 tests**, exact package artifact verification.
+- `PI_TRUE_COLOR=0 make check`: strict TypeScript, **45 tests**, exact package artifact verification.
 - `PI_TRUE_COLOR=0 npm run pack:check`: prepack gates and the 14-file source artifact. The integration fixture explicitly disables inherited npm dry-run mode for its own temporary archive, avoiding a missing-archive failure when run from prepack.
 - `FORCE_COLOR=3 PI_TRUE_COLOR=1 node --test test/render.test.ts test/viewer-ui.test.ts`: **26 tests**.
 - `npm audit --omit=dev`: zero reported vulnerabilities in the declared production dependency tree. The existing Pi 1.4.0 host/dev dependency-chain advisories remain; this is not an audit of an independently installed Pi host.
@@ -93,7 +93,7 @@ The real integration test installs the packed artifact under a temporary `node_m
 - Reload reconnects the same tab; fork/resume/new-session transitions follow the same Pi process. Drafts are retained separately and restored on resume, without automatic submission or late-acknowledgement loss.
 - Closing the viewer leaves Pi alive and does not respawn it, including across reload. A later ownership handoff or `/rex-view` reopens it. Pi exit closes it.
 
-Additional tests cover Unicode/control text across transport pages, concurrent detail reads, nested identities and unavailable historical output, dialog validation/races/timeouts/shutdown, and disconnected submissions. A routed-action fixture injects a timeout **after** command execution: background recovery does not replay it, explicit retry is deduplicated, and a new generation refuses replay. Counterfactual removal of command deduplication makes that test fail with two deliveries instead of one. Temporary mutations were restored. Removing extra press interception still passed the native-TUI tests, so the implementation retains Pi's native selection/click synthesis rather than intercepting presses unnecessarily.
+Additional tests cover Unicode/control text across transport pages, concurrent detail reads, nested identities and unavailable historical output, typed dialog validation/races/timeouts/shutdown, preservation of later extensions' UI methods, and disconnected submissions. Integration readiness uses fixture-published public session identity and its observed session name rather than assumed reconnect delays or private session-file layout. A fresh public tools-expansion reading confirms the desktop handoff before requesting iOS ownership again. A routed-action fixture injects a timeout **after** command execution: background recovery does not replay it, explicit retry is deduplicated, and a new generation refuses replay. Counterfactual removal of command deduplication makes that test fail with two deliveries instead of one. Temporary mutations were restored. Removing extra press interception still passed the native-TUI tests, so the implementation retains Pi's native selection/click synthesis rather than intercepting presses unnecessarily.
 
 ### Still unverified / upstream boundaries
 

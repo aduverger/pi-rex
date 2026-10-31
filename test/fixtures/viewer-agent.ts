@@ -1,8 +1,16 @@
 import { writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export default function viewerAgent(pi: ExtensionAPI) {
+  const publishState = (ctx: ExtensionContext) => {
+    if (!process.env.PIREX_TEST_STATE_FILE) return;
+    writeFileSync(process.env.PIREX_TEST_STATE_FILE, JSON.stringify({
+      pid: process.pid, sessionId: ctx.sessionManager.getSessionId(), sessionFile: ctx.sessionManager.getSessionFile(),
+      name: pi.getSessionName(), toolsExpanded: ctx.ui.getToolsExpanded(),
+    }));
+  };
   pi.registerProvider("pirex-test", {
     baseUrl: "http://127.0.0.1", apiKey: "local-fixture-only", api: "pirex-test",
     models: [{ id: "test", name: "Viewer test", reasoning: true, input: ["text"], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 4000 }],
@@ -40,9 +48,12 @@ export default function viewerAgent(pi: ExtensionAPI) {
       return stream;
     },
   });
-  pi.on("session_start", () => {
-    if (process.env.PIREX_TEST_PID_FILE) writeFileSync(process.env.PIREX_TEST_PID_FILE, String(process.pid));
+  pi.on("session_start", (_event, ctx) => {
+    pi.setSessionName(`Fixture ${randomUUID()}`);
+    ctx.ui.setToolsExpanded(true);
+    publishState(ctx);
   });
+  pi.registerCommand("fixture-state", { description: "Report the current public session/UI state", handler: async (_args, ctx) => { publishState(ctx); } });
   pi.registerCommand("fixture-notice", { description: "Local notification fixture", handler: async (_args, ctx) => { ctx.ui.notify("Fixture notification", "error"); } });
   pi.registerCommand("fixture-resume", { description: "Resume a local test session", handler: async (path, ctx) => { await ctx.switchSession(path); } });
   pi.registerCommand("fixture-fork", { description: "Fork a local test session", handler: async (_args, ctx) => {
