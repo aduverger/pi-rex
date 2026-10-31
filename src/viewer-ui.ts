@@ -69,11 +69,15 @@ class Card implements Component {
 }
 
 export function detailText(detail: ViewDetail): string {
-  const content = typeof detail.content === "string" ? detail.content : Array.isArray(detail.content) ? detail.content.map((item) => {
-    const block = item as { type?: string; text?: string };
-    return block.type === "image" ? "[Image omitted: text-only viewer]" : block.text ?? "";
-  }).join("\n") : JSON.stringify(detail.content, null, 2);
-  return safeText(`${detail.unavailable ? "Pi did not save this tool's output.\n" : ""}Arguments\n${JSON.stringify(detail.args, null, 2) ?? "[unavailable]"}\n\nOutput\n${content ?? ""}`);
+  let output: string | undefined;
+  if (typeof detail.content === "string") output = detail.content;
+  else if (Array.isArray(detail.content)) {
+    output = detail.content.map((item) => {
+      const block = item as { type?: string; text?: string };
+      return block.type === "image" ? "[Image omitted: text-only viewer]" : block.text ?? "";
+    }).join("\n");
+  } else output = JSON.stringify(detail.content, null, 2);
+  return safeText(`${detail.unavailable ? "Pi did not save this tool's output.\n" : ""}Arguments\n${JSON.stringify(detail.args, null, 2) ?? "[unavailable]"}\n\nOutput\n${output ?? ""}`);
 }
 
 export class ViewerApp {
@@ -183,7 +187,11 @@ export class ViewerApp {
       const node = this.nodes[index];
       if (node.kind === "text") {
         const box = new Container();
-        box.addChild(new Text(muted(node.thinking ? "Reasoning" : node.role === "user" ? "You" : node.role === "assistant" ? "Pi" : node.role ?? "Info"), 0, 0));
+        let heading = node.role ?? "Info";
+        if (node.thinking) heading = "Reasoning";
+        else if (node.role === "user") heading = "You";
+        else if (node.role === "assistant") heading = "Pi";
+        box.addChild(new Text(muted(heading), 0, 0));
         box.addChild(new Markdown(safeText(node.text ?? ""), 0, 0, getMarkdownTheme()));
         box.addChild(new Text(" ", 0, 0));
         this.document.addChild(box);
@@ -220,7 +228,10 @@ export class ViewerApp {
     for (const child of run.filter((child) => child.parentId === node.id && child.id !== node.id)) body.addChild(this.toolCard(child, run.filter((tool) => tool.id !== node.id)));
     const detail = this.details.get(node.id);
     const error = this.detailErrors.get(node.id);
-    body.addChild(new Text(error ? safeText(error) : detail ? detailText(detail) : "Loading tool details…", 1, 0));
+    let bodyText = "Loading tool details…";
+    if (error) bodyText = safeText(error);
+    else if (detail) bodyText = detailText(detail);
+    body.addChild(new Text(bodyText, 1, 0));
     const metadata = detail?.details as { diff?: unknown } | undefined;
     if (node.name === "edit" && typeof metadata?.diff === "string") body.addChild(new Text(renderDiff(safeText(metadata.diff)), 1, 0));
     return new Card(`${statusIcon(node.status)} ${bold(safeText(node.name ?? "tool"))} ${safeText(node.label ?? "").replace(/\s+/g, " ")}`,

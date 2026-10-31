@@ -38,19 +38,19 @@ export interface ReadPage { id: string; text: string; next: number | null }
 
 export class ViewReads {
   private reads = new Map<string, { id: string; text: string }>();
-  read(client: string, args: Record<string, unknown>, value: () => unknown): ReadPage {
-    let read = this.reads.get(client);
+  read(readKey: string, args: Record<string, unknown>, value: () => unknown): ReadPage {
+    let read = this.reads.get(readKey);
     let offset = 0;
     if (args.readId === undefined) {
       read = { id: randomUUID(), text: JSON.stringify(value()) };
-      this.reads.set(client, read);
+      this.reads.set(readKey, read);
     } else {
       if (!read || read.id !== string(args.readId)) throw new RexError("conflict", "View read expired; fetch a fresh snapshot");
       offset = Number(args.offset);
       if (!Number.isSafeInteger(offset) || offset < 0 || offset > read.text.length) throw new Error("Invalid view read offset");
     }
     const end = Math.min(read.text.length, offset + 8000);
-    if (end === read.text.length) this.reads.delete(client);
+    if (end === read.text.length) this.reads.delete(readKey);
     return { id: read.id, text: read.text.slice(offset, end), next: end < read.text.length ? end : null };
   }
   clear() { this.reads.clear(); }

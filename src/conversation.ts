@@ -22,7 +22,7 @@ interface Tool {
 export class ConversationView {
   private live?: { id: string; message: unknown };
   private tools = new Map<string, Tool>();
-  private details = new Map<string, ViewDetail>();
+  private projectedTools = new Map<string, Tool>();
 
   updateMessage(message: unknown, id: string) {
     if (record(message).role === "assistant") this.live = { id, message };
@@ -31,9 +31,11 @@ export class ConversationView {
   updateTool(event: { toolCallId: string; toolName: string; args?: unknown; parentToolCallId?: string; partialResult?: unknown; result?: unknown; isError?: boolean }) {
     const previous = this.tools.get(event.toolCallId);
     const result = record(event.result ?? event.partialResult);
+    let status: Tool["status"] = "running";
+    if (event.result) status = event.isError ? "error" : "success";
     this.tools.set(event.toolCallId, { id: event.toolCallId, name: event.toolName, args: event.args ?? previous?.args,
       parentId: event.parentToolCallId ?? previous?.parentId, content: result.content ?? [], details: result.details,
-      status: event.result ? (event.isError ? "error" : "success") : "running" });
+      status });
   }
 
   project(ctx: Pick<ExtensionContext, "sessionManager">, before?: string): { nodes: ViewNode[]; before?: string } {
@@ -61,9 +63,12 @@ export class ConversationView {
         if (Array.isArray(nested.calls)) for (const value of nested.calls) {
           const child = record(value);
           if (typeof child.id !== "string") continue;
+          let status: Tool["status"] = "unknown";
+          if (child.status === "ok") status = "success";
+          else if (child.status === "error") status = "error";
           tools.set(child.id, { id: child.id, name: String(child.name ?? "tool"), args: child.arguments, parentId: message.toolCallId,
             content: child.error ? [{ type: "text", text: String(child.error) }] : [], unavailable: true,
-            status: child.status === "ok" ? "success" : child.status === "error" ? "error" : "unknown" });
+            status });
         }
       }
     }
@@ -73,7 +78,7 @@ export class ConversationView {
       });
     }
     for (const [id, tool] of this.tools) tools.set(id, tool);
-    this.details = new Map([...tools].map(([id, tool]) => [id, { args: tool.args, content: content(tool.content).map((block) => block.type === "image" ? { type: "text", text: "[Image omitted: text-only viewer]" } : block), details: tool.details, unavailable: tool.unavailable }]));
+    this.projectedTools = tools;
     const nodes: ViewNode[] = [];
     const seen = new Set<string>();
     const addTool = (id: string) => {
@@ -117,8 +122,13 @@ export class ConversationView {
   }
 
   detail(id: string): ViewDetail {
-    const detail = this.details.get(id);
-    if (!detail) throw new Error("Tool details are no longer on this branch");
-    return detail;
+    const tool = this.projectedTools.get(id);
+    if (!tool) throw new Error("Tool details are no longer on this branch");
+    return {
+      args: tool.args,
+      content: content(tool.content).map((block) => block.type === "image" ? { type: "text", text: "[Image omitted: text-only viewer]" } : block),
+      details: tool.details,
+      unavailable: tool.unavailable,
+    };
   }
 }

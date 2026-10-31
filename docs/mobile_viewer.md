@@ -119,3 +119,23 @@ Choices where the product decisions did not prescribe a mechanism, least-confide
 10. **State transport:** coalesce invalidations for 100 ms, pull snapshots rather than emit per-token actions, page history in 50-entry windows, and fetch tool details on demand. Split JSON into 8,000-code-unit chunks: even worst-case wire escaping stays below Rex's 64 KiB minimum limit. Completed reads are released; replacing an attachment clears unfinished reads. No second transcript store is created.
 11. **Packaging:** retain the source-based package. Use `ws` for the mature transport and `jiti/register` for the viewer because Node cannot natively strip TypeScript inside `node_modules`. A Node-hosted Pi reuses its executable; other hosts resolve Node from PATH. Pin the test provider's Pi AI SDK to the same 1.4.0 development runtime. No build pipeline, gateway, settings changes, or publication is added.
 12. **Testing:** use temporary real Rex servers and the actual packed Pi extension/viewer, with a deterministic local provider. This avoids live configuration changes and model credentials. Skip only these integration tests if Rex is absent; native TUI/projection/protocol tests still run. Real device validation is not inferred from these fixtures.
+
+## Ship simplification review
+
+The agreed intent is the user requirement; the decision ledger records agent-selected mechanisms, not additional approved product requirements. Preserve both for independent review and the PR description.
+
+### Disposition points, behavior preserved
+
+- Dispatch-only acknowledgement and missing Pi-private-TUI error visibility may fall short of the requested self-contained mobile workflow. This is a disclosed implementation boundary, not an explicitly accepted product exclusion like custom screens or model/thinking controls.
+- The greater-than-five threshold currently counts root calls, whereas the user specified consecutive tool calls without defining nested-call counting. Preserve the implementation pending review disposition.
+- Prompt-template/skill dispatch, notification mirroring, per-conversation in-memory draft restoration, system-theme selection, busy Enter steering, and the extra keyboard shortcuts are agent-introduced behavior/UX choices. They remain intact rather than being removed as unrequested features.
+
+### Simplification decisions, least-confident first
+
+1. Keep the current projected tool records and derive requested details directly from them instead of eagerly copying every tool into a second derived detail map. Detail values, image placeholders, branch visibility, and on-demand transport remain unchanged; no object-identity contract is introduced.
+2. Use bridge presence as the session activation state, share the session-start/tree restart path, and forward Pi's own event type instead of capturing a duplicate type string for each listener. Ownership intent, caller verification, generation checks, cancellation, and explicit command deduplication remain separate required protections.
+3. Expand nested status/content/role conditionals into direct branches, and name chunk-read keys by their actual view/detail scope. No new abstractions, public API changes, or test curation are needed.
+
+Compared with the existing renderer, Pi's public TUI primitives, and Bergère's dialog bridge, the remaining transport, paging, uncertainty ledger, process-local reload state, and dialog cancellation each address an agreed behavior or an exercised failure. Wrapping action rows and cards cover layout the shared primitives do not directly supply; no gateway, generic provider layer, supervisor, or second transcript store is added.
+
+Revalidation: `PI_TRUE_COLOR=0 make check` passed (strict TypeScript, all 44 tests including isolated real Pi/Rex lifecycle and uncertain-command recovery, and package verification); `git diff --check` passed. Test files were left unchanged for the Test phase. No commits or out-of-scope edits were made. Live iOS, Node 22, Bun-hosted Pi, and Linux validation remain outstanding as recorded above.

@@ -54,9 +54,9 @@ export class PiBridge {
   readonly dialogs: Dialogs;
   private liveMessageId = randomUUID();
 
-  constructor(privatePi: ExtensionAPI, rex: RexContext, context: ExtensionContext, ownership: ViewerOwnership = { mobile: false, openRequested: false }) {
+  constructor(pi: ExtensionAPI, rex: RexContext, context: ExtensionContext, ownership: ViewerOwnership = { mobile: false, openRequested: false }) {
     this.ownership = ownership;
-    this.pi = privatePi;
+    this.pi = pi;
     this.rex = rex;
     this.context = context;
     this.dialogs = new Dialogs(() => this.changed());
@@ -242,41 +242,35 @@ export class PiBridge {
 
 export function registerViewer(pi: ExtensionAPI, rex: RexContext): (mobile: boolean) => void {
   let bridge: PiBridge | undefined;
-  let active = false;
   const states = processState[ownershipKey] ??= new Map();
   const key = `${rex.session}:${rex.block}`;
   const ownership = states.get(key) ?? { mobile: false, openRequested: false };
   states.set(key, ownership);
-  pi.on("session_start", async (_event, ctx) => {
+  const startBridge = (_event: unknown, ctx: ExtensionContext) => {
     bridge?.stop();
     bridge = undefined;
-    active = ctx.mode === "tui";
-    if (!active) return;
+    if (ctx.mode !== "tui") return;
     bridge = new PiBridge(pi, rex, ctx, ownership);
     void bridge.start();
-  });
-  pi.on("session_shutdown", () => { active = false; bridge?.stop(); bridge = undefined; });
-  pi.on("session_tree", (_event, ctx) => {
-    bridge?.stop();
-    if (ctx.mode !== "tui") { bridge = undefined; return; }
-    bridge = new PiBridge(pi, rex, ctx, ownership);
-    void bridge.start();
-  });
-  const forward = (type: string) => (event: unknown) => bridge?.message(type, event);
-  pi.on("message_start", forward("message_start"));
-  pi.on("message_update", forward("message_update"));
-  pi.on("message_end", forward("message_end"));
-  pi.on("agent_start", forward("agent_start"));
-  pi.on("agent_end", forward("agent_end"));
-  pi.on("agent_settled", forward("agent_settled"));
-  pi.on("tool_execution_start", forward("tool_execution_start"));
-  pi.on("tool_execution_update", forward("tool_execution_update"));
-  pi.on("tool_execution_end", forward("tool_execution_end"));
-  pi.on("session_compact", forward("session_compact"));
-  pi.on("session_info_changed", forward("session_info_changed"));
+  };
+  pi.on("session_start", startBridge);
+  pi.on("session_tree", startBridge);
+  pi.on("session_shutdown", () => { bridge?.stop(); bridge = undefined; });
+  const forward = (event: { type: string }) => bridge?.message(event.type, event);
+  pi.on("message_start", forward);
+  pi.on("message_update", forward);
+  pi.on("message_end", forward);
+  pi.on("agent_start", forward);
+  pi.on("agent_end", forward);
+  pi.on("agent_settled", forward);
+  pi.on("tool_execution_start", forward);
+  pi.on("tool_execution_update", forward);
+  pi.on("tool_execution_end", forward);
+  pi.on("session_compact", forward);
+  pi.on("session_info_changed", forward);
   pi.registerCommand("rex-view", { description: "Open or reuse the conversation viewer without switching tabs", handler: async (_args, ctx) => {
     if (!bridge || ctx.mode !== "tui") { ctx.ui.notify("The viewer requires Pi TUI mode inside Rex", "error"); return; }
     try { await bridge.openViewer(); } catch (error) { ctx.ui.notify(String(error), "error"); }
   } });
-  return (next) => { if (active) bridge?.ownerChanged(next); };
+  return (next) => bridge?.ownerChanged(next);
 }
