@@ -107,16 +107,21 @@ test("query failure falls back to normal rendering and a later owner event can r
   f.state.owner = "client:ios";
   await f.save();
   const transitions: boolean[] = [];
-  const stop = watchRexOwner(f.context, (mobile) => transitions.push(mobile));
+  const verified: boolean[] = [];
+  const stop = watchRexOwner(f.context, (mobile) => transitions.push(mobile), (mobile) => verified.push(mobile));
   t.after(async () => stop());
   await waitFor(() => transitions.at(-1) === true);
   f.state.queryError = true;
   await f.ownerChanged();
   await waitFor(() => transitions.at(-1) === false);
+  assert.ok(verified.length > 0 && verified.every((owner) => owner), "query failure must not invent a desktop ownership handoff");
   f.state.queryError = false;
   await f.ownerChanged();
   await waitFor(() => transitions.length === 3);
   assert.deepEqual(transitions, [true, false, true]);
+  f.state.owner = "client:desktop";
+  await f.ownerChanged();
+  await waitFor(() => verified.at(-1) === false);
 });
 
 test("a stale iOS owner response cannot override a newer desktop handoff", async (t) => {
@@ -163,17 +168,19 @@ test("event stream exit restores normal rendering", async (t) => {
 
 test("extension watches only in TUI mode and restores expansion on handoff and shutdown", async (t) => {
   const f = await fixture(t);
-  const handlers = new Map<string, (event: unknown, context: ExtensionContext) => void>();
+  const handlers = new Map<string, ((event: unknown, context: ExtensionContext) => void)[]>();
+  const emit = (name: string, context: ExtensionContext) => { for (const handler of handlers.get(name) ?? []) handler({}, context); };
   let rendererRegistered = false;
   const pi = {
     registerToolRenderer() { rendererRegistered = true; },
+    registerCommand() {},
     on(name: string, handler: (event: unknown, context: ExtensionContext) => void) {
-      handlers.set(name, handler);
+      handlers.set(name, [...handlers.get(name) ?? [], handler]);
     },
   } as unknown as ExtensionAPI;
-  const env = { REX_SESSION: process.env.REX_SESSION, REX_BLOCK: process.env.REX_BLOCK, REX_BIN_DIR: process.env.REX_BIN_DIR };
+  const env = { REX_SESSION: process.env.REX_SESSION, REX_BLOCK: process.env.REX_BLOCK, REX_BIN_DIR: process.env.REX_BIN_DIR, REX_SERVER: process.env.REX_SERVER };
   try {
-    Object.assign(process.env, { REX_SESSION: f.context.session, REX_BLOCK: f.context.block, REX_BIN_DIR: f.directory });
+    Object.assign(process.env, { REX_SESSION: f.context.session, REX_BLOCK: f.context.block, REX_BIN_DIR: f.directory, REX_SERVER: "" });
     rexExtension(pi);
   } finally {
     for (const [key, value] of Object.entries(env)) {
@@ -185,13 +192,15 @@ test("extension watches only in TUI mode and restores expansion on handoff and s
   const context = {
     mode: "json",
     ui: {
+      setStatus() {},
+      notify() {},
       getToolsExpanded: () => expanded,
       setToolsExpanded: (value: boolean) => { expanded = value; },
     },
-  } as ExtensionContext;
+  } as unknown as ExtensionContext;
   for (const mode of ["json", "rpc", "print"] as const) {
     context.mode = mode;
-    handlers.get("session_start")!({}, context);
+    emit("session_start", context);
     await setTimeout(100);
     await assert.rejects(readFile(join(f.directory, "pid")), { code: "ENOENT" });
     assert.equal(expanded, true);
@@ -199,8 +208,8 @@ test("extension watches only in TUI mode and restores expansion on handoff and s
   f.state.owner = "client:ios";
   await f.save();
   context.mode = "tui";
-  handlers.get("session_start")!({}, context);
-  t.after(async () => { handlers.get("session_shutdown")!({}, context); });
+  emit("session_start", context);
+  t.after(async () => { emit("session_shutdown", context); });
   await waitFor(() => !expanded);
   f.state.owner = "client:desktop";
   await f.ownerChanged();
@@ -208,9 +217,9 @@ test("extension watches only in TUI mode and restores expansion on handoff and s
   f.state.owner = "client:ios";
   await f.ownerChanged();
   await waitFor(() => !expanded);
-  handlers.get("session_shutdown")!({}, context);
+  emit("session_shutdown", context);
   assert.equal(expanded, true);
-  handlers.get("session_shutdown")!({}, context);
+  emit("session_shutdown", context);
 });
 
 test("missing CLI and malformed responses fail without enabling mobile rendering", async (t) => {

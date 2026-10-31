@@ -1,11 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { compactToolRenderer } from "./render.ts";
+import { registerViewer } from "./bridge.ts";
 import { getRexContext, watchRexOwner } from "./rex.ts";
 
 export default function rexExtension(pi: ExtensionAPI) {
   const rex = getRexContext();
   if (!rex) return;
 
+  const viewerOwnerChanged = registerViewer(pi, rex);
   let mobile = false;
   let stop: (() => void) | undefined;
   const redraws = new Map<object, () => void>();
@@ -32,7 +34,7 @@ export default function rexExtension(pi: ExtensionAPI) {
         previousExpansion = undefined;
       }
       for (const redraw of redraws.values()) redraw();
-    });
+    }, viewerOwnerChanged);
   });
 
   pi.on("session_shutdown", () => {

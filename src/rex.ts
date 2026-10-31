@@ -9,6 +9,7 @@ export interface RexContext {
   command: string;
   session: string;
   block: string;
+  server?: string;
 }
 
 export function getRexContext(env: NodeJS.ProcessEnv = process.env): RexContext | undefined {
@@ -17,6 +18,7 @@ export function getRexContext(env: NodeJS.ProcessEnv = process.env): RexContext 
     command: env.REX_BIN_DIR ? join(env.REX_BIN_DIR, "rex") : "rex",
     session: env.REX_SESSION,
     block: env.REX_BLOCK,
+    ...(env.REX_SERVER ? { server: env.REX_SERVER } : {}),
   };
 }
 
@@ -40,7 +42,7 @@ export async function hasIosOwner(context: RexContext, signal?: AbortSignal): Pr
     inspectionClient?.client?.info?.platform === "ios";
 }
 
-export function watchRexOwner(context: RexContext, onMobile: (mobile: boolean) => void): () => void {
+export function watchRexOwner(context: RexContext, onMobile: (mobile: boolean) => void, onVerifiedOwner?: (mobile: boolean) => void): () => void {
   const controller = new AbortController();
   const child = spawn(context.command, [...cliOptions, "events", "-s", context.session, "--json"], {
     stdio: ["ignore", "pipe", "ignore"],
@@ -59,13 +61,16 @@ export function watchRexOwner(context: RexContext, onMobile: (mobile: boolean) =
 
   async function refresh() {
     const current = ++revision;
-    let next = false;
+    let next: boolean | undefined;
     try {
       next = await hasIosOwner(context, controller.signal);
     } catch {
       // Unavailable ownership information leaves Pi's normal rendering in place.
     }
-    if (!stopped && current === revision) publish(next);
+    if (!stopped && current === revision) {
+      if (next !== undefined) onVerifiedOwner?.(next);
+      publish(next ?? false);
+    }
   }
 
   function stop() {
