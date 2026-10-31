@@ -29,7 +29,7 @@ class UIConnection extends ViewerConnection {
   calls: Record<string, unknown>[] = [];
   accept?: () => Promise<void>;
   constructor() { super({ endpoint: "", session: "", block: "", pid: 1, viewerBlock: "" }, () => {}, () => {}); this.connected = true; }
-  override async command(action: Record<string, unknown>) { this.calls.push(action); await this.accept?.(); return { submitted: true }; }
+  override async command(action: Record<string, unknown>) { this.calls.push(action); await this.accept?.(); return { dispatched: true }; }
   override async detail(id: string) { return { args: { path: `${id}.ts` }, content: [{ type: "text", text: `Output for ${id}` }] }; }
 }
 const state = (overrides: Partial<ViewState> = {}): ViewState => ({ generation: "generation", revision: 1, sessionId: "session", name: "Fixture", busy: false, nodes: [], dialogs: [], customUI: false, ...overrides });
@@ -83,7 +83,7 @@ test("real TUI mouse press/release activates controls and retains edits made whi
   acknowledge(); await delay(30);
   assert.equal(app.editor.getExpandedText(), "Same text in two sessions", "an old acknowledgement must not clear the new conversation draft");
   app.update(state({ generation: "resumed" }));
-  assert.equal(app.editor.getExpandedText(), "", "the accepted old draft must not return on resume");
+  assert.equal(app.editor.getExpandedText(), "", "the dispatched original draft must not return automatically on resume");
 });
 
 test("tool groups and individual cards expand by touch, folds and scrolling survive updates, and narrow resizes fit", async (t) => {
@@ -161,4 +161,34 @@ test("session changes retain independent drafts, and touch answers pending stand
   await click("Cancel dialog");
   assertCommand(connection.calls.at(-1), { kind: "answer", dialogId: "editor", cancelled: true });
   assert.equal(app.editor.getExpandedText(), "Old session draft");
+});
+
+test("unconfirmed dispatches retain recoverable text without overwriting drafts or replaying", async (t) => {
+  const { app, connection, screen, click, terminal } = await setup(t, state());
+  app.editor.setText("Unconfirmed message");
+  await click("Send");
+  assert.equal(app.editor.getExpandedText(), "");
+  assert.match((await screen()).join("\n"), /acceptance unconfirmed/);
+  app.update(state({ nodes: [
+    { id: "other-surface", kind: "text", role: "user", text: "Unconfirmed message" },
+    { id: "reply", kind: "text", role: "assistant", text: "Small viewport reply" },
+  ] }));
+  terminal.columns = 40; terminal.rows = 10; terminal.resized();
+  const phoneViewport = (await screen()).join("\n");
+  assert.match(phoneViewport, /Small viewport reply/);
+  assert.match(phoneViewport, /Submission recovery/);
+  assert.match(phoneViewport, /acceptance unconfirmed/);
+  terminal.columns = 80; terminal.rows = 24; terminal.resized();
+  app.editor.setText("Keep this newer draft");
+  await click("Submission recovery");
+  assert.match((await screen()).join("\n"), /Dispatched; acceptance unconfirmed/);
+  await click("Insert into draft");
+  assert.equal(app.editor.getExpandedText(), "Keep this newer draft\nUnconfirmed message");
+  assert.equal(connection.calls.length, 1, "recovering text must not submit it again");
+  app.update(state({ generation: "replacement", sessionId: "new-session" }));
+  await click("Submission recovery");
+  assert.match((await screen()).join("\n"), /Previous conversation/);
+  await click("Dismiss");
+  assert.doesNotMatch((await screen()).join("\n"), /Submission recovery/);
+  assert.equal(connection.calls.length, 1);
 });

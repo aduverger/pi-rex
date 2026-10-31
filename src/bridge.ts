@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { getPackageDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createJiti } from "jiti";
 import { ConversationView } from "./conversation.ts";
 import { object, RexControl, RexError, rexEndpoint, string, type PerformRequest } from "./control.ts";
 import { Dialogs } from "./dialogs.ts";
@@ -39,6 +40,7 @@ export class PiBridge {
   generation = randomUUID();
   revision = 0;
   private ready = false;
+  private compacting = false;
   private ownership: ViewerOwnership;
   private endpoint = "";
   private stopped = false;
@@ -59,7 +61,7 @@ export class PiBridge {
     this.pi = pi;
     this.rex = rex;
     this.context = context;
-    this.dialogs = new Dialogs(() => this.changed());
+    this.dialogs = new Dialogs(() => this.changed(), () => pi.getSettings().externalEditor);
     this.undoUI = this.dialogs.install(context.ui);
   }
   private pi: ExtensionAPI;
@@ -133,7 +135,9 @@ export class PiBridge {
       const { stdout } = await promisify(execFile)("node", ["-p", "process.execPath"], { timeout: 2500 });
       node = stdout.trim();
     }
-    const command = [node, "--import", import.meta.resolve("jiti/register"), fileURLToPath(new URL("./viewer.ts", import.meta.url)), "--server", this.endpoint, "--session", this.rex.session, "--source-block", this.rex.block, "--source-pid", String(process.pid)];
+    const host = createJiti(join(getPackageDir(), "package.json"));
+    const alias = Object.fromEntries(["@earendil-works/pi-coding-agent", "@earendil-works/pi-tui"].map((name) => [name, fileURLToPath(host.esmResolve(name))]));
+    const command = [node, fileURLToPath(new URL("./viewer-bootstrap.mjs", import.meta.url)), JSON.stringify(alias), "--server", this.endpoint, "--session", this.rex.session, "--source-block", this.rex.block, "--source-pid", String(process.pid)];
     await control.request("session.new_window", {
       session_id: this.rex.session, window_label: "Pi conversation", focus: false,
       layout: { block: { flavor: "com.superlogical.terminal.shell", label: viewerLabel(process.pid), options: {
@@ -208,19 +212,22 @@ export class PiBridge {
         if (this.dialogs.visible.length || this.dialogs.custom) throw new Error("Answer the pending dialog first");
         if (!["send", "steer", "followUp"].includes(string(args.delivery))) throw new Error("Invalid prompt delivery");
         if (!this.context.isIdle() && args.delivery === "send") throw new Error("Pi is running: choose Steer or Follow-up");
-        if (text.startsWith("/") && !this.pi.getCommands().some((command) => text.slice(1).split(/\s/)[0] === command.name)) {
-          throw new Error("That terminal-only slash command is not supported in this viewer");
-        }
+        const commandName = text.startsWith("/") ? text.slice(1).split(/\s/)[0] : undefined;
+        const command = commandName ? this.pi.getCommands().find((command) => command.name === commandName) : undefined;
+        if (text.startsWith("/") && !command) throw new Error("That terminal-only slash command is not supported in this viewer");
+        if (this.compacting && command?.source !== "extension") throw new Error("Pi is compacting; wait for it to finish before sending this prompt");
         this.dialogs.notice = undefined;
         this.pi.sendUserMessage(text, { expandPromptTemplates: true,
           ...(!this.context.isIdle() ? { deliverAs: args.delivery as "steer" | "followUp" } : {}) });
       } else throw new Error("Unknown Pi command");
       this.changed();
-      return { submitted: true };
+      return { dispatched: true };
     });
   }
 
   message(type: string, event: unknown) {
+    if (type === "session_before_compact") this.compacting = true;
+    if (type === "session_compact" || type === "session_compact_failed") this.compacting = false;
     if (type === "message_start") this.liveMessageId = randomUUID();
     if (type === "message_start" || type === "message_update") this.conversation.updateMessage(object(event).message, this.liveMessageId);
     if (type === "message_end" || type === "agent_settled") this.conversation.endMessage();
@@ -266,7 +273,9 @@ export function registerViewer(pi: ExtensionAPI, rex: RexContext): (mobile: bool
   pi.on("tool_execution_start", forward);
   pi.on("tool_execution_update", forward);
   pi.on("tool_execution_end", forward);
+  pi.on("session_before_compact", forward);
   pi.on("session_compact", forward);
+  pi.on("session_compact_failed", forward);
   pi.on("session_info_changed", forward);
   pi.registerCommand("rex-view", { description: "Open or reuse the conversation viewer without switching tabs", handler: async (_args, ctx) => {
     if (!bridge || ctx.mode !== "tui") { ctx.ui.notify("The viewer requires Pi TUI mode inside Rex", "error"); return; }

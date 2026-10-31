@@ -12,7 +12,10 @@ function statusIcon(status: ViewNode["status"]) {
   return muted(status === "running" ? "◌" : "?");
 }
 
+const DISPATCH_NOTICE = "Dispatched; acceptance unconfirmed";
+
 interface Action { label: string; run: () => void }
+interface UnconfirmedSubmission { sessionId: string; text: string; status: string }
 class Actions implements Component {
   private positions: { action: Action; x: number; y: number; width: number }[] = [];
   private actions: () => Action[];
@@ -100,6 +103,8 @@ export class ViewerApp {
   private sending = false;
   private alert = "";
   private drafts = new Map<string, string>();
+  private unconfirmedSubmissions = new Set<UnconfirmedSubmission>();
+  private showSubmissionRecovery = false;
   private tui: TuiAltScreen;
   private connection: ViewerConnection;
 
@@ -151,6 +156,7 @@ export class ViewerApp {
       if (previous) this.drafts.set(previous.sessionId, this.editor.getExpandedText());
       this.editor.setText(this.drafts.get(state.sessionId) ?? "");
       this.opened.clear();
+      this.showSubmissionRecovery = false;
       this.scroll.scrollToEnd();
       this.tui.resetTextSelection();
     }
@@ -212,6 +218,29 @@ export class ViewerApp {
           this.opened.has(key), body, () => { this.toggle(key); }));
       } else this.document.addChild(body);
       index = end;
+    }
+    if (this.unconfirmedSubmissions.size) {
+      const recovery = new Container();
+      recovery.addChild(new Text("These may already have executed. Inserting text only edits the draft; it does not resend.", 1, 0));
+      for (const submission of this.unconfirmedSubmissions) {
+        const conversation = submission.sessionId === this.state?.sessionId ? "" : "Previous conversation · ";
+        recovery.addChild(new Text(safeText(`${conversation}${submission.status}\n\n${submission.text}`), 1, 0));
+        recovery.addChild(new Actions(() => [
+          { label: "Insert into draft", run: () => {
+            const draft = this.editor.getExpandedText();
+            this.editor.setText(draft ? `${draft}\n${submission.text}` : submission.text);
+            this.showSubmissionRecovery = false;
+            this.tui.setFocus(this.editor);
+            this.rebuild();
+          } },
+          { label: "Dismiss", run: () => { this.unconfirmedSubmissions.delete(submission); this.rebuild(); } },
+        ]));
+      }
+      this.document.addChild(new Actions(() => [{ label: `Submission recovery (${this.unconfirmedSubmissions.size})`, run: () => {
+        this.showSubmissionRecovery = !this.showSubmissionRecovery;
+        this.rebuild();
+      } }]));
+      if (this.showSubmissionRecovery) this.document.addChild(recovery);
     }
     this.tui.requestRender();
   }
@@ -302,22 +331,27 @@ export class ViewerApp {
     const text = this.editor.getExpandedText();
     if (this.editor.disableSubmit || !text.trim()) return;
     const sessionId = this.state!.sessionId;
-    this.sending = true; this.status(); this.alert = "";
+    const submission = { sessionId, text, status: "Dispatch in progress" };
+    this.unconfirmedSubmissions.add(submission);
+    this.showSubmissionRecovery = false;
+    this.sending = true; this.alert = ""; this.rebuild(); this.status();
     try {
       await this.connection.command({ kind: "prompt", text, delivery });
+      submission.status = DISPATCH_NOTICE;
+      this.alert = DISPATCH_NOTICE;
       this.editor.addToHistory(text);
       if (this.state?.sessionId === sessionId) {
         if (this.editor.getExpandedText() === text) this.editor.setText("");
       } else if (this.drafts.get(sessionId) === text) this.drafts.delete(sessionId);
-    } catch (error) { this.alert = String(error); }
-    finally { this.sending = false; this.status(); }
+    } catch (error) { submission.status = `Outcome unconfirmed: ${String(error)}`; this.alert = String(error); }
+    finally { this.sending = false; this.rebuild(); this.status(); }
   }
   private async retry() {
     const request = this.connection.uncertain;
     try {
       await this.connection.retry();
       if (request?.kind === "prompt" && request.generation === this.state?.generation && this.editor.getExpandedText() === request.text) this.editor.setText("");
-      this.alert = "";
+      this.alert = request?.kind === "prompt" ? DISPATCH_NOTICE : "";
     } catch (error) { this.alert = String(error); }
     this.status();
   }

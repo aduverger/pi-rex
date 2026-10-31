@@ -55,6 +55,7 @@ const allowed = new Set([
   "src/viewer-connection.ts",
   "src/viewer-ui.ts",
   "src/viewer.ts",
+  "src/viewer-bootstrap.mjs",
 ]);
 for (const file of packed) {
   if (!allowed.has(file)) throw new Error(`package contains unapproved file: ${file}`);

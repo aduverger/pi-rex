@@ -8,7 +8,7 @@ function setup() {
   const local: { resolve: (value: unknown) => void; signal?: AbortSignal }[] = [];
   const ask = (...args: unknown[]) => new Promise((resolve) => { local.push({ resolve, signal: (args.at(-1) as { signal?: AbortSignal })?.signal }); });
   const ui = { select: ask, confirm: ask, input: ask, editor: ask, custom: ask, notify() {} } as unknown as ExtensionUIContext;
-  const dialogs = new Dialogs(() => {});
+  const dialogs = new Dialogs(() => {}, () => undefined);
   const restore = dialogs.install(ui);
   return { ui, local, dialogs, restore };
 }

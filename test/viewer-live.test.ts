@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, rm, symlink } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { DefaultPackageManager, getPackageDir, SettingsManager } from "@earendil-works/pi-coding-agent";
+import { createJiti } from "jiti";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { RexControl } from "../src/control.ts";
@@ -10,7 +14,7 @@ import { viewerLabel } from "../src/bridge.ts";
 import { bridgeLabel } from "../src/view-state.ts";
 import { startRex } from "./fixtures/rex-server.ts";
 
-interface AgentState { pid: number; sessionId: string; sessionFile?: string; name: string; toolsExpanded: boolean }
+interface AgentState { pid: number; sessionId: string; sessionFile?: string; name: string; toolsExpanded: boolean; compacting: boolean }
 
 async function until<T>(run: () => Promise<T | undefined | false>, description: string, timeout = 12000): Promise<T> {
   const deadline = Date.now() + timeout;
@@ -22,22 +26,58 @@ async function until<T>(run: () => Promise<T | undefined | false>, description: 
   throw new Error(`Timed out: ${description}`);
 }
 
+async function installPackedViewer(directory: string) {
+  const agentDir = join(directory, "agent");
+  await mkdir(agentDir);
+  const { stdout } = await promisify(execFile)("npm", ["pack", "--dry-run=false", "--ignore-scripts", "--json", "--pack-destination", directory], { env: { ...process.env, npm_config_cache: resolve(".npm-cache") } });
+  const packageSource = `npm:@aduverger/pi-rex@file:${join(directory, JSON.parse(stdout)[0].filename)}`;
+  const packages = new DefaultPackageManager({ cwd: directory, agentDir, settingsManager: SettingsManager.inMemory({ npmCommand: ["npm", "--dry-run=false", "--prefer-offline", "--cache", resolve(".npm-cache")] }) });
+  await packages.install(packageSource);
+  const installation = packages.getInstalledPath(packageSource, "user");
+  assert.ok(installation);
+  await assert.rejects(access(join(dirname(dirname(installation)), "@earendil-works")), { code: "ENOENT" });
+  assert.throws(() => createJiti(join(installation, "src/viewer.ts")).esmResolve("@earendil-works/pi-coding-agent"), "the viewer must not find a physical Pi peer through its installation ancestry");
+  return { agentDir, installation };
+}
+
+test("Pi-managed viewer bootstrap imports host exports without physical Pi peers or Rex", { timeout: 60000 }, async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "pirex-package-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const { installation } = await installPackedViewer(directory);
+  const alias = {
+    "@earendil-works/pi-coding-agent": fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")),
+    "@earendil-works/pi-tui": fileURLToPath(import.meta.resolve("@earendil-works/pi-tui")),
+  };
+  const bootstrap = join(installation, "src/viewer-bootstrap.mjs");
+  // Missing source flags stop main before terminal setup; this probe checks imports only.
+  const probe = `process.argv = [process.execPath, ${JSON.stringify(bootstrap)}, ${JSON.stringify(JSON.stringify(alias))}];
+    await import(${JSON.stringify(pathToFileURL(bootstrap).href)});
+    process.exitCode = 0;`;
+  await promisify(execFile)(process.execPath, ["--input-type=module", "--eval", probe]);
+});
+
 test("real Pi and Rex: automatic unfocused viewer, live messages/dialogs, reload, reopen, and process exit", { timeout: 90000 }, async (t) => {
   const lab = await startRex(t);
   if (!lab) return;
-  const installation = join(lab.directory, "node_modules", "@aduverger", "pi-rex");
-  await mkdir(installation, { recursive: true });
-  const { stdout } = await promisify(execFile)("npm", ["pack", "--dry-run=false", "--ignore-scripts", "--json", "--pack-destination", lab.directory], { env: { ...process.env, npm_config_cache: resolve(".npm-cache") } });
-  await promisify(execFile)("tar", ["-xzf", join(lab.directory, JSON.parse(stdout)[0].filename), "-C", installation, "--strip-components=1"]);
-  for (const dependency of ["@earendil-works", "jiti", "ws"]) await symlink(resolve("node_modules", dependency), join(lab.directory, "node_modules", dependency));
-  const agentDir = join(lab.directory, "agent");
-  await mkdir(agentDir);
+  const { agentDir, installation } = await installPackedViewer(lab.directory);
+  const hostPackage = JSON.parse(await readFile(join(getPackageDir(), "package.json"), "utf8"));
+  const piCli = join(getPackageDir(), hostPackage.bin.pi);
   const stateFile = join(lab.directory, "pi-state.json");
+  const editorMarker = join(lab.directory, "editor-used.txt");
+  const editorCommand = async (name: string) => {
+    const script = join(lab.directory, `${name}-editor.mjs`);
+    await writeFile(script, `import {writeFileSync} from "node:fs"; writeFileSync(${JSON.stringify(editorMarker)}, ${JSON.stringify(name)}); writeFileSync(process.argv.at(-1), ${JSON.stringify(`Edited by ${name} editor`)});`);
+    return `${process.execPath} ${script}`;
+  };
+  const configuredEditor = await editorCommand("configured");
+  const environmentEditor = await editorCommand("environment");
+  await writeFile(join(agentDir, "settings.json"), JSON.stringify({ externalEditor: configuredEditor, compaction: { enabled: false, keepRecentTokens: 0 } }));
+  const compactionRelease = join(lab.directory, "release-compaction");
   const readState = async (): Promise<AgentState | undefined> => {
     try { return JSON.parse(await readFile(stateFile, "utf8")); } catch { return undefined; }
   };
-  const command = ["/usr/bin/env", `PI_CODING_AGENT_DIR=${agentDir}`, `PIREX_TEST_STATE_FILE=${stateFile}`, "PI_TELEMETRY=0", process.execPath,
-    resolve("node_modules/@earendil-works/pi-coding-agent/dist/cli.js"), "--no-extensions", "-e", join(installation, "src/index.ts"), "-e", resolve("test/fixtures/viewer-agent.ts"),
+  const command = ["/usr/bin/env", `PI_CODING_AGENT_DIR=${agentDir}`, `PIREX_TEST_STATE_FILE=${stateFile}`, `PIREX_TEST_COMPACTION_RELEASE=${compactionRelease}`, `VISUAL=${environmentEditor}`, `EDITOR=${environmentEditor}`, "PI_TELEMETRY=0", process.execPath,
+    piCli, "--no-extensions", "-e", join(installation, "src/index.ts"), "-e", resolve("test/fixtures/viewer-agent.ts"),
     "--no-skills", "--no-prompt-templates", "--no-context-files", "--no-themes", "--no-approve", "--provider", "pirex-test", "--model", "test", "--use-theme", "dark"];
   const created = await lab.control.request<{ session_id: string }>("session.create", { label: "Viewer integration", initial_windows: [{ window_label: "Pi", layout: { block: { flavor: "com.superlogical.terminal.shell", options: { shell: "none", command, cwd: lab.directory } } } }] });
   const session = created.session_id;
@@ -53,6 +93,16 @@ test("real Pi and Rex: automatic unfocused viewer, live messages/dialogs, reload
   const clients = async () => (await lab.control.request<{ clients: { client_id: string; info?: { label?: string } }[] }>("client.list", { session_id: session })).clients;
   await until(async () => (await clients()).find((client) => client.info?.label === bridgeLabel(pid)), "Pi bridge registration");
   assert.equal((await blocks()).length, 1, "desktop startup must not create a viewer");
+  await until(async () => (await capture(source.block_id)).includes("─"), "Pi input ready");
+  await type(source.block_id, "/fixture-editor\r");
+  await until(async () => (await capture(source.block_id)).includes("Prefilled answer"), "desktop standard editor");
+  await type(source.block_id, "\x07");
+  const usedEditor = await until(async () => { try { return await readFile(editorMarker, "utf8"); } catch { return undefined; } }, "external editor executed");
+  assert.equal(usedEditor, "configured", "Pi's configured editor must take precedence over VISUAL/EDITOR");
+  await until(async () => (await capture(source.block_id)).includes("Edited by configured editor"), "native editor received external edits");
+  await type(source.block_id, "\r");
+  await until(async () => (await capture(source.block_id)).includes("Answered editor: Edited by configured editor"), "desktop editor returned its value");
+  assert.equal((await blocks()).length, 1, "desktop editor behavior must not require a viewer");
   const ios = new RexControl();
   await ios.connect(lab.endpoint, "test-ios", { kind: "app", platform: "ios" });
   t.after(() => ios.close());
@@ -87,6 +137,22 @@ test("real Pi and Rex: automatic unfocused viewer, live messages/dialogs, reload
   await type(viewer.block_id, "\x01\x0b");
   await type(viewer.block_id, "/fixture-notice\r");
   await until(async () => (await capture(viewer.block_id)).includes("error: Fixture notification"), "extension notification mirrored");
+  await type(source.block_id, "/compact\r");
+  await until(async () => (await readState())?.compacting, "manual compaction entered its public hook");
+  await until(async () => (await capture(viewer.block_id)).split("\n")[0].includes("· working"), "viewer observed compaction");
+  await type(viewer.block_id, "blocked during compaction");
+  await click("Steer");
+  await until(async () => (await capture(viewer.block_id)).includes("Pi is compacting"), "compaction rejection visible on mobile");
+  assert.match(await capture(viewer.block_id), /blocked during compaction/);
+  await writeFile(compactionRelease, "");
+  await idle();
+  await type(viewer.block_id, "\x01\x0b");
+  await type(viewer.block_id, "/fixture-throw\r");
+  await until(async () => (await capture(source.block_id)).includes("Fixture command failure"), "Pi reported the throwing command through its error channel");
+  await until(async () => (await capture(viewer.block_id)).includes("acceptance unconfirmed"), "dispatch did not claim command acceptance");
+  await click("Submission recovery");
+  await until(async () => (await capture(viewer.block_id)).includes("/fixture-throw"), "rejected command text remains visibly recoverable");
+  await type(viewer.block_id, "\x01\x0b");
   for (const delivery of ["Steer", "Follow-up"] as const) {
     await type(viewer.block_id, `slow initial ${delivery}\r`);
     await until(async () => (await capture(viewer.block_id)).split("\n")[0].includes("· working"), "streaming response");

@@ -7,7 +7,11 @@ export class Dialogs {
   custom = 0;
   notice?: string;
   private changed: () => void;
-  constructor(changed: () => void) { this.changed = changed; }
+  private getExternalEditor: () => string | undefined;
+  constructor(changed: () => void, getExternalEditor: () => string | undefined) {
+    this.changed = changed;
+    this.getExternalEditor = getExternalEditor;
+  }
   get visible(): ViewDialog[] { return [...this.pending.values()].map((value) => value.dialog); }
 
   private request(dialog: Omit<ViewDialog, "id">, local: (signal: AbortSignal) => Promise<unknown>, options?: ExtensionUIDialogOptions): Promise<string | boolean | undefined> {
@@ -66,7 +70,8 @@ export class Dialogs {
       const finish = (value: string | undefined) => { signal.removeEventListener("abort", cancel); done(value); };
       const cancel = () => finish(undefined);
       signal.addEventListener("abort", cancel, { once: true });
-      const component = new ExtensionEditorComponent(tui, keys, title, prefill, finish, cancel);
+      const configuredEditor = this.getExternalEditor();
+      const component = new ExtensionEditorComponent(tui, keys, title, prefill, finish, cancel, undefined, configuredEditor?.trim() ? configuredEditor : undefined);
       if (signal.aborted) queueMicrotask(cancel);
       return Object.assign(component, { dispose: () => signal.removeEventListener("abort", cancel) });
     })) as string | undefined;

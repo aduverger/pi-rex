@@ -1,14 +1,15 @@
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createAssistantMessageEventStream, type AssistantMessage } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 export default function viewerAgent(pi: ExtensionAPI) {
+  let compacting = false;
   const publishState = (ctx: ExtensionContext) => {
     if (!process.env.PIREX_TEST_STATE_FILE) return;
     writeFileSync(process.env.PIREX_TEST_STATE_FILE, JSON.stringify({
       pid: process.pid, sessionId: ctx.sessionManager.getSessionId(), sessionFile: ctx.sessionManager.getSessionFile(),
-      name: pi.getSessionName(), toolsExpanded: ctx.ui.getToolsExpanded(),
+      name: pi.getSessionName(), toolsExpanded: ctx.ui.getToolsExpanded(), compacting,
     }));
   };
   pi.registerProvider("pirex-test", {
@@ -53,6 +54,18 @@ export default function viewerAgent(pi: ExtensionAPI) {
     ctx.ui.setToolsExpanded(true);
     publishState(ctx);
   });
+  pi.on("session_before_compact", async (event, ctx) => {
+    const release = process.env.PIREX_TEST_COMPACTION_RELEASE;
+    if (!release) return;
+    compacting = true;
+    publishState(ctx);
+    while (!existsSync(release) && !event.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 20));
+    return { compaction: { summary: "Fixture compaction summary", firstKeptEntryId: event.branchEntries[0].id, tokensBefore: 0 } };
+  });
+  const compactionFinished = (_event: unknown, ctx: ExtensionContext) => { compacting = false; publishState(ctx); };
+  pi.on("session_compact", compactionFinished);
+  pi.on("session_compact_failed", compactionFinished);
+  pi.registerCommand("fixture-throw", { description: "Throw a standard extension-command error", handler: async () => { throw new Error("Fixture command failure"); } });
   pi.registerCommand("fixture-state", { description: "Report the current public session/UI state", handler: async (_args, ctx) => { publishState(ctx); } });
   pi.registerCommand("fixture-notice", { description: "Local notification fixture", handler: async (_args, ctx) => { ctx.ui.notify("Fixture notification", "error"); } });
   pi.registerCommand("fixture-resume", { description: "Resume a local test session", handler: async (path, ctx) => { await ctx.switchSession(path); } });
