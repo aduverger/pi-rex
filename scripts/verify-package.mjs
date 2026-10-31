@@ -25,6 +25,10 @@ for (const name of [
   if (pkg.peerDependencies?.[name] !== "*") throw new Error(`${name} must use Pi's bundled runtime`);
 }
 
+for (const name of ["ws", "jiti"]) {
+  if (typeof pkg.dependencies?.[name] !== "string") throw new Error(`viewer runtime dependency missing: ${name}`);
+}
+
 const packEnvironment = {
   ...process.env,
   npm_config_cache: new URL("../.npm-cache", import.meta.url).pathname,
@@ -43,6 +47,15 @@ const allowed = new Set([
   "src/index.ts",
   "src/render.ts",
   "src/rex.ts",
+  "src/control.ts",
+  "src/conversation.ts",
+  "src/dialogs.ts",
+  "src/view-state.ts",
+  "src/bridge.ts",
+  "src/viewer-connection.ts",
+  "src/viewer-ui.ts",
+  "src/viewer.ts",
+  "src/viewer-bootstrap.mjs",
 ]);
 for (const file of packed) {
   if (!allowed.has(file)) throw new Error(`package contains unapproved file: ${file}`);
