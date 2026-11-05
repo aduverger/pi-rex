@@ -12,11 +12,14 @@ class NativeFallback implements Component {
 
   constructor(name: string, original: ToolRenderers | undefined, context: RenderContext, resultOnly: boolean) {
     // Pi supplies only the missing slots; real custom renderers still receive the original context.
-    const definition = original || resultOnly ? {
-      renderShell: "self" as const,
-      renderCall: original?.renderCall || resultOnly ? () => empty : undefined,
-      renderResult: original?.renderResult ? () => empty : undefined,
-    } : undefined;
+    let definition: ToolRenderers | undefined;
+    if (original || resultOnly) {
+      definition = {
+        renderShell: "self",
+        renderCall: original?.renderCall || resultOnly ? () => empty : undefined,
+        renderResult: original?.renderResult ? () => empty : undefined,
+      };
+    }
     this.tool = new ToolExecutionComponent(name, context.toolCallId, context.args, {
       showImages: context.showImages,
       outputPad: context.outputPad,
@@ -173,14 +176,12 @@ export function compactToolRenderer(
     return value;
   }
 
-  function presentation(context: RenderContext) {
+  function isSummary(context: RenderContext) {
     const cached = state(context);
     const globalExpanded = getToolsExpanded();
     if (cached.globalExpanded !== globalExpanded || context.expanded) cached.preview = false;
     cached.globalExpanded = globalExpanded;
-    if (!isMobile()) return "native";
-    if (context.expanded) return "full";
-    return cached.preview ? "preview" : "summary";
+    return isMobile() && !context.expanded && !cached.preview;
   }
 
   function summary(args: unknown, theme: Theme, context: RenderContext) {
@@ -198,7 +199,7 @@ export function compactToolRenderer(
     renderCall(args, theme, context) {
       track(context);
       const cached = state(context);
-      const folded = presentation(context) === "summary";
+      const summaryOnly = isSummary(context);
       if (!original?.renderCall || !original.renderResult) {
         cached.fallback ??= new NativeFallback(name, original, context, false);
         cached.fallback.updateCall(args, context);
@@ -207,12 +208,12 @@ export function compactToolRenderer(
         ? original.renderCall(args, theme, { ...context, lastComponent: cached.call })
         : cached.fallback;
       const background = toolAppearance(context).background;
-      const backgroundStyle = folded ? undefined : (text: string) => theme.bg(background, text);
-      const selfRendered = original?.renderShell === "self" && !folded;
-      cached.frame = selfRendered || (!original && !folded)
+      const backgroundStyle = summaryOnly ? undefined : (text: string) => theme.bg(background, text);
+      const selfRendered = original?.renderShell === "self" && !summaryOnly;
+      cached.frame = selfRendered || (!original && !summaryOnly)
         ? new Container()
         : new Box(context.outputPad, 1, backgroundStyle);
-      if (folded) {
+      if (summaryOnly) {
         // Pi supplies the result after renderCall; build the summary after its error is available.
         let text: string | undefined;
         let cachedWidth: number | undefined;
@@ -232,7 +233,7 @@ export function compactToolRenderer(
         cached.frame.addChild(cached.call);
       }
       if (!isMobile()) return cached.frame;
-      return new ToolFrame(cached.frame, theme, !selfRendered, folded ? () => {
+      return new ToolFrame(cached.frame, theme, !selfRendered, summaryOnly ? () => {
         cached.preview = true;
         context.invalidate();
       } : undefined);
@@ -255,7 +256,7 @@ export function compactToolRenderer(
       } else {
         cached.result = original?.renderCall || !cached.frame ? cached.fallback : empty;
       }
-      if (presentation(context) === "summary") return empty;
+      if (isSummary(context)) return empty;
       if (!cached.result) return empty;
       if (cached.frame) {
         cached.frame.addChild(cached.result);

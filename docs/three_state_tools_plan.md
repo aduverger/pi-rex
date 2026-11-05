@@ -2,13 +2,21 @@
 
 Status: implemented on `improve_renderer` (based on main); native iOS acceptance remains outstanding.
 
+## Workspace intent for review
+
+- **User goal and requirements:** make long Pi sessions responsive in the existing Rex iOS terminal, adding native preview between the compact summary and full output. Preserve the first state's tick/cross, neutral frame and no green/red fill, along with native details, interactive controls, desktop behavior and execution/session authority.
+- **Accepted operating assumptions:** the announced tap cycle is summary → preview → full → summary; custom controls keep their own clicks. Pi owns full expansion and its global shortcut; local previews reset when that global preference changes. Preview size remains tool-specific, not universally five rows. Mobile presentation follows the actual iOS block owner, not terminal dimensions or a merely connected phone; tapping requires user-enabled fullscreen mode.
+- **Agent-chosen mechanisms, not extra product requirements:** bounded summary/frame caches, a local preview flag plus Pi's global preference snapshot, and a synchronous native-fallback redraw guard. Preserve lifecycle/timer cleanup and independent child updates; the particular cache representation or formatting-call counts are not public contracts.
+- **Non-goals and rejected approaches:** the separate viewer is set aside. No OpenTUI/Bun frontend, new dependencies, tool re-registration, reconstructed details/grouping, persistent expansion preferences, blanket removal of native expanded backgrounds, keyboard-dismissal workaround, PTY/ownership heuristics, scrollbar changes or speculative workers/retries. Do not enable/disable the live extension, reload, restart, change settings or publish as part of this work.
+- **Tradeoffs and evidence limits:** repeated host-render formatting is reduced without promising constant-time history layout, eliminating cold-frame/GC costs or establishing phone latency. Native iOS three-state acceptance and Linux validation remain open; public Pi APIs and existing fallback/image/export limitations remain authoritative.
+
 ## Required behavior
 
 - Keep today's mobile summary: neutral rounded border and scrollbar gutter, one summary content row, pending/tick/cross, tool name and path/command, first error line when present. No green/red background fill in this state. Pi's existing leading separator remains.
 - Add native preview between summary and full. Preview sizes and formatting belong to each original renderer (bash uses five visual output rows); do not impose a universal five-line rule.
 - Full output retains original renderers, highlighting, details and interactive controls.
 - Desktop ownership retains normal Pi formatting. Keep authenticated Rex owner detection, prior desktop expansion preference, stored results and native tool lifecycle behavior unchanged.
-- Fix measured repeated work on unchanged historical tools. Do not skip native call/result lifecycle updates to save time: they stop streaming timers and preserve custom state.
+- Fix measured repeated work on unchanged historical tools. Preserve streaming timer cleanup and custom state while details are hidden; continued native call/result lifecycle delegation is the chosen mechanism.
 - No separate viewer, dependencies, keyboard/fullscreen settings, PTY changes, live reload, publication or unrelated `.pi/` changes.
 
 ## Interaction assumptions
@@ -82,3 +90,13 @@ The summary warm median was 135.92 ms before the change in the earlier same-shap
 - [ ] Linux validation. Local probes are macOS, not cross-platform certification.
 
 Pi's mandatory leading blank row and the historical iOS HTML custom-call-arguments limitation are unchanged. Preserve existing work and reload only when ready; no automatic reload or restart was performed.
+
+## /ship simplification decision ledger
+
+No new product decisions. Least-confident first:
+
+1. Replace the internal four-label presentation helper with the one summary predicate its consumers actually need. Pi's expanded flag and the existing preview flag still determine all three observable states; global-change synchronization is unchanged. Rename the local `folded` condition to `summaryOnly` because native preview is also collapsed from Pi's perspective. No public API change or additional user decision is needed.
+2. Retain the bounded caches, child-output checks, native fallback and synchronization guard. Each addresses measured repeated work, existing interactive behavior or reproduced Pi 1.5 re-entry; removing them would not be behavior-preserving simplification.
+3. Build the missing-slot native definition with an explicit conditional instead of nested conditional expressions. Preserve every supplied/missing renderer combination. Keep tests and benchmark methodology unchanged for the separate test-curation phase.
+
+The complete scoped diff was reviewed against main and the existing Pi renderer/mouse/lifecycle path. No intent mismatch was identified. Historical implementation validation above is retained separately from the simplification-phase checks reported to `/ship`; no commit is made by this phase.
