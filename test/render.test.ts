@@ -112,7 +112,7 @@ for (const { name, args, definition, output } of cases) {
   }
 }
 
-test("diagnostic summaries omit border glyphs but retain geometry, neutral styling and gutter", () => {
+test("borderless summaries retain geometry, neutral styling and gutter", () => {
   for (const { name, args, definition } of cases) {
     const { component, setMobile } = tool(name, args, definition);
     component.updateResult({ content: [{ type: "text", text: "done" }], isError: false });

@@ -1,39 +1,39 @@
 # Three-state tool output and long-session rendering
 
-> Local trial on `diagnostic/borderless-summary`: all three tool states now use spaces instead of decorative border glyphs. Text, native backgrounds/highlighting, geometry, gutter and interaction are retained. The implementation/review record below describes the bordered baseline unless the trial sections say otherwise.
+> Accepted presentation: summary, native preview and full output are borderless. Preserve native backgrounds/highlighting in preview/full, controls, spacer rows, text inset and scrollbar gutter. The user accepted keeping this design after the local field trial; no tighter layout was requested.
 
-Status: implemented on `improve_renderer` (based on main); native iOS acceptance remains outstanding.
+Status: implemented; the borderless follow-up is accepted, not a temporary display mode or setting. Earlier implementation/review evidence below is explicitly historical where it describes borders. Broad device validation and measured phone latency remain open.
 
 ## Workspace intent for review
 
-- **User goal and requirements:** make long Pi sessions responsive in the existing Rex iOS terminal, adding native preview between the compact summary and full output. Preserve the first state's tick/cross, neutral frame and no green/red fill, along with native details, interactive controls, desktop behavior and execution/session authority.
+- **User goal and requirements:** make long Pi sessions responsive in the existing Rex iOS terminal, adding native preview between the compact summary and full output. Preserve the first state's tick/cross, neutral summary and no green/red fill, along with native details, interactive controls, desktop behavior and execution/session authority. The later accepted design removes decorative borders in all three states without changing spacing.
 - **Accepted operating assumptions:** the announced tap cycle is summary → preview → full → summary; custom controls keep their own clicks. Pi owns full expansion and its global shortcut; local previews reset when that global preference changes. Preview size remains tool-specific, not universally five rows. Mobile presentation follows the actual iOS block owner, not terminal dimensions or a merely connected phone; tapping requires user-enabled fullscreen mode.
 - **Agent-chosen mechanisms, not extra product requirements:** bounded summary/frame caches, a local preview flag plus Pi's global preference snapshot, and a synchronous native-fallback redraw guard. Preserve lifecycle/timer cleanup and independent child updates; the particular cache representation or formatting-call counts are not public contracts.
-- **Non-goals and rejected approaches:** the separate viewer is set aside. No OpenTUI/Bun frontend, new dependencies, tool re-registration, reconstructed details/grouping, persistent expansion preferences, blanket removal of native expanded backgrounds, keyboard-dismissal workaround, PTY/ownership heuristics, scrollbar changes or speculative workers/retries. Do not enable/disable the live extension, reload, restart, change settings or publish as part of this work.
-- **Tradeoffs and evidence limits:** repeated host-render formatting is reduced without promising constant-time history layout, eliminating cold-frame/GC costs or establishing phone latency. Native iOS three-state acceptance and Linux validation remain open; public Pi APIs and existing fallback/image/export limitations remain authoritative.
+- **Non-goals and rejected approaches:** the separate viewer is set aside. No OpenTUI/Bun frontend, new dependencies, tool re-registration, reconstructed details/grouping, persistent expansion preferences, blanket removal of native expanded backgrounds, keyboard-dismissal workaround, PTY/ownership heuristics, scrollbar changes or speculative workers/retries. Do not automatically enable/disable the live extension, reload, restart or change settings. No npm release is part of this renderer work; PR updates follow the authorized shipping workflow.
+- **Tradeoffs and evidence limits:** repeated host-render formatting is reduced without promising constant-time history layout, eliminating cold-frame/GC costs or establishing phone latency. Broad native iOS interaction and Linux validation remain open; public Pi APIs and existing fallback/image/export limitations remain authoritative.
 
 ## Required behavior
 
-- Keep today's mobile summary: neutral rounded border and scrollbar gutter, one summary content row, pending/tick/cross, tool name and path/command, first error line when present. No green/red background fill in this state. Pi's existing leading separator remains.
+- Use borderless mobile presentation in all three states. Keep the summary's pending/tick/cross, tool name and path/command, first error line when present, and no green/red background fill. Preserve the existing spacer rows, text inset and scrollbar gutter; Pi's leading separator remains.
 - Add native preview between summary and full. Preview sizes and formatting belong to each original renderer (bash uses five visual output rows); do not impose a universal five-line rule.
 - Full output retains original renderers, highlighting, details and interactive controls.
 - Desktop ownership retains normal Pi formatting. Keep authenticated Rex owner detection, prior desktop expansion preference, stored results and native tool lifecycle behavior unchanged.
 - Fix measured repeated work on unchanged historical tools. Preserve streaming timer cleanup and custom state while details are hidden; continued native call/result lifecycle delegation is the chosen mechanism.
-- No separate viewer, dependencies, keyboard/fullscreen settings, PTY changes, live reload, publication or unrelated `.pi/` changes.
+- No separate viewer, dependencies, keyboard/fullscreen settings, PTY changes, automatic live reload, npm release or unrelated `.pi/` changes.
 
 ## Interaction assumptions
 
-- Unhandled left clicks cycle **summary → preview → full → summary**. Existing custom controls consume their own clicks; tapping the frame border advances the tool instead.
+- Unhandled left clicks cycle **summary → preview → full → summary**. Existing custom controls consume their own clicks; tapping unhandled padding advances the tool instead.
 - Pi remains owner of the expanded boolean (full output). The extension owns only the additional local preview choice while Pi is collapsed. Pi's native full-expansion click requires a result; this is not bypassed while a tool has not produced output.
 - Pi's global expansion shortcut selects full or summary and resets local preview choices when its global preference changes. Read that preference through the public UI getter, not keybinding guesses or private host fields.
 - Local choices survive streaming updates, resize and ordinary invalidation. Ownership handoff preserves choices unless Pi's global expansion restoration resets them. Choices are not persisted across reloads.
 - Some tools' native previews already omit successful output (read) or show their diff (edit). The extra state retains those native rules, even when preview/full look similar.
 
-## Work sequence
+## Completed implementation sequence
 
 - [x] Trace public renderer/mouse/invalidation/global-expansion contracts and current fallback/lifecycle tests.
 - [x] Add per-tool preview selection without duplicating native tool content or introducing another full-expansion authority.
-- [x] Cache summary construction/clipping and border formatting by width/content. Still render delegated children to detect independent interactive updates; a blind whole-component cache would make those controls stale.
+- [x] Cache summary construction/clipping and mobile output formatting by width/content. Still render delegated children to detect independent interactive updates; a blind whole-component cache would make those controls stale.
 - [x] Extend native comparisons to preview/full, three-click cycling, global expansion, updates and ownership handoff. Retain ANSI isolation, images/fallbacks, HTML-result and timer-cleanup checks.
 - [x] Repair fallback redraw re-entry exposed by actual Pi 1.5 validation. Suppress only nested redraw notifications during controlled inner-component synchronization, not independent asynchronous updates.
 - [x] Add deterministic state/lifecycle/rendering-correctness regressions and a reproducible, non-gating long-session benchmark. Compare against native Pi without asserting machine-dependent timing thresholds or private formatting-call counts.
@@ -44,7 +44,7 @@ Status: implemented on `improve_renderer` (based on main); native iOS acceptance
 
 Isolated macOS render-only replay, Pi 1.5.0, 5,000 completed bash calls, 40×24 viewport, warm median: native preview 3.58 ms; existing compact output 135.92 ms; same compact output without outer border formatting 56.91 ms; test-only cached whole frame 0.99 ms. Whole-frame memoization was diagnostic only: native/custom child interactions still need to be observed in production. The user's active extension state was not established by these probes.
 
-## Implementation decision ledger — least confident first
+## Original bordered implementation decision ledger — least confident first
 
 1. **Tap behavior.** Choose the announced three-click cycle, keep native custom controls interactive, and use the existing frame edge as an unhandled expansion target. Add no new buttons or labels. If asking were free, I would ask whether preview should instead be the tap endpoint with full output available only through a separate action. Device acceptance remains open.
 2. **Global versus local choices.** Keep only a per-tool preview flag and a snapshot of Pi's global preference. The public `getToolsExpanded()` callback is needed because a row in preview already has `context.expanded === false`; that flag alone cannot distinguish ordinary invalidation from a global collapse. Pi still owns full expansion. If asking were free, I would confirm that global controls should reset local previews, matching Pi's existing global-reset behavior.
@@ -54,7 +54,7 @@ Isolated macOS render-only replay, Pi 1.5.0, 5,000 completed bash calls, 40×24 
 6. **Keep hidden lifecycle work.** Continue delegating call/result updates in summary mode, reusing original components/state. Rendering less text must not stop native timer cleanup or discard custom interactive state. The performance repair targets repeated frame formatting, not speculative lazy execution of renderer callbacks.
 7. **Performance evidence.** Use public rendering/state/lifecycle regressions plus a separate timing script, not private formatting-call counts or a wall-clock CI threshold. Actual 1.5 probes use temporary source/test copies and the installed SDK, not a changed version label or production host modification. If asking were free, I would ask for representative device/session traces before attributing all observed latency to this extension.
 
-## Validation outcomes
+## Initial bordered implementation validation
 
 - `PI_TRUE_COLOR=0 make check`: strict TypeScript, **34 tests**, exact six-file source package verification.
 - Same 34 tests on actual Node **22.19.0** and **24.15.0**, with pinned Pi **1.4.0**. No dependency changes.
@@ -68,7 +68,7 @@ Isolated macOS render-only replay, Pi 1.5.0, 5,000 completed bash calls, 40×24 
 - Actual Pi 1.5 initially failed six legacy fallback/geometry cases because of recursive invalidation. After the guard, the complete suite passes; the pinned 1.4 regression explicitly simulates a public redraw notification so this protection is not dependent on the separate 1.5 probe.
 - `git diff --check` and Markdown link targets checked. No live session, Rex settings, global extension settings or publication changes.
 
-### Recorded benchmark
+### Recorded bordered-baseline benchmark
 
 Run `PI_TRUE_COLOR=0 node scripts/benchmark-renderer.mjs`. Completed bash outputs contain 100 representative lines, 40×24 viewport, 20 repeated frames. This is host rendering only, not Rex transport, native iOS input, terminal output or phone performance. The same script ran against both SDK versions.
 
@@ -87,13 +87,14 @@ The summary warm median was 135.92 ms before the change in the earlier same-shap
 
 ## Remaining acceptance/platform gates
 
-- [ ] Native Rex iOS three-state tapping, custom controls and visual acceptance after a user-directed reload.
+- [x] User acceptance of keeping all-state borderless presentation after user-directed field trials.
+- [ ] Broad native Rex iOS tapping, custom controls, keyboard/IME and accessibility validation.
 - [ ] Real long-session phone scrolling/typing/keyboard-resize latency, including cold frames and GC outliers.
 - [ ] Linux validation. Local probes are macOS, not cross-platform certification.
 
 Pi's mandatory leading blank row and the historical iOS HTML custom-call-arguments limitation are unchanged. Preserve existing work and reload only when ready; no automatic reload or restart was performed.
 
-## /ship simplification decision ledger
+## Initial /ship simplification decision ledger
 
 No new product decisions. Least-confident first:
 
@@ -117,10 +118,10 @@ The renderer helper changed for this feature, so its existing consumers were rev
 | Edit error | Failed edits look successful or lose native error output. | Move status/cache logic into another coherent helper. |
 | Bash success | Output leaks into summary or preview/full/desktop formatting changes. | Replace frame or clipping implementation. |
 | Bash error | Failed shell calls lose their cross, first message or native output. | Change local presentation bookkeeping. |
-| Neutral compact frames | Summary gains colored fill, extra padding or desktop borders. | Build identical visible frames without Box/Container. |
-| Wrapped edit highlights | Wrapped inverse styles color borders/gutter or drop native diff content. | Use equivalent resets or different frame composition. |
+| Borderless summaries | Summary gains border glyphs, colored fill, changed spacing or desktop decoration. | Build identical terminal cells without Box/Container. |
+| Wrapped edit highlights | Wrapped inverse styles color margins/gutter or drop native diff content. | Use equivalent resets or different shell composition. |
 | Short custom highlights | Highlighting spills onto empty padding or the tiny-width gutter. | Change padding/reset mechanics without changing resolved cells. |
-| Auto scrollbar | Revealing the scrollbar overwrites corners or shifts tool content. | Change internal layout with unchanged visible geometry. |
+| Auto scrollbar | Revealing the scrollbar overwrites tool content or shifts it. | Change internal layout with unchanged visible geometry. |
 | Theme changes | Existing tools retain stale theme colors after invalidation. | Rebuild components or refresh styles in place. |
 | Child mouse/focus | A custom control receives shifted coordinates or loses focus. | Replace delegation layers while preserving normalized events. |
 | Folded streaming/errors | Streaming unfolds summary or final failure leaves a pending/success indicator. | Change lazy/eager summary preparation with identical output. |
@@ -148,7 +149,7 @@ Isolated counterfactual checks rejected a shared-state mutation and removal of r
 
 Net curation: one added case, two rewritten cases, one removed case, no consolidation; still 34 tests. No production or configuration change was required. Device/latency/Linux acceptance gaps above remain open.
 
-## Initial summary-only borderless field trial
+## Historical summary-only borderless field trial
 
 Authorized after the user reported residual iOS scrolling lag with all tools collapsed. This is a local diagnostic variant based on `improve_renderer` at `9861007`, not a published design change or new configuration setting.
 
@@ -171,9 +172,9 @@ A synthetic Pi 1.5 fullscreen scrolling replay at the phone's observed 49×42 si
 
 The user subsequently reported slightly better scrolling, then requested border removal in expanded output too. This is subjective device feedback, not a measured phone-latency result. No automatic live reload, settings change, push or publication was performed.
 
-## Borderless preview/full follow-up
+## Accepted borderless preview/full follow-up
 
-Extend the local trial to remove decorative borders from preview and full output as well. Keep native success/error/pending backgrounds, code/diff highlighting, original controls, text width, spacer rows, gutter and three-state/global expansion behavior. No fullscreen or keyboard change, live reload, dependency or configuration option is introduced.
+The local trial was extended to remove decorative borders from preview and full output as well, then accepted by the user. Native success/error/pending backgrounds, code/diff highlighting, original controls, text width, spacer rows, gutter and three-state/global expansion behavior remain. No fullscreen or keyboard change, automatic live reload, dependency or configuration option is introduced.
 
 The existing mobile wrapper now only handles layout, clipping, ANSI isolation, caching and mouse delegation; its border-only theme dependency and summary-decoration condition are removed. Tests use the unchanged padding-row click target rather than looking for removed corner glyphs. Native styled-cell comparisons remain, while corner/theme-border assertions are replaced by neutral margins, scrollbar/content isolation and native highlighted content after a theme switch.
 
@@ -185,4 +186,14 @@ The existing mobile wrapper now only handles layout, clipping, ANSI isolation, c
 
 Validation: `PI_TRUE_COLOR=0 make check` and `PI_TRUE_COLOR=0 npm run pack:check` pass (34 tests and six-file source artifact), as do all 34 tests on Node 22.19.0 and actual Pi 1.5, plus 26 forced-color renderer cases. Preview/full styled content still matches native Pi, including light-theme syntax colors, wrapped diffs, error output, mouse focus/coordinates and scrollbar isolation. Padding-row taps still cycle all three states; streaming completion and fallback-redraw protection remain covered.
 
-Phone acceptance of expanded output and any further latency improvement remain unverified. Reload remains user-directed; no automatic live settings change, push or publication was performed.
+The user accepted keeping this presentation. Further latency improvement remains unmeasured; the earlier report of slightly better scrolling is subjective, not proof that border removal resolves the lag. Reload remains user-directed; no automatic live settings change, push or publication was performed during the trial.
+
+## Rebased /ship simplification decision ledger — least confident first
+
+1. Retain the existing shell, bounded caches, local preview/global preference synchronization and fallback redraw guard. They preserve accepted layout/ANSI isolation, independently changing controls, Pi's full-expansion authority and reproduced native redraw behavior. No redundant production layer was found; no production code or public API change is needed.
+2. Resolve the documentation mismatch rather than reverting accepted behavior: README and current intent now describe all-state borderless output, while earlier framed requirements/benchmarks are explicitly historical. Preserve spacer rows and native expanded backgrounds; accepting border removal does not authorize tighter layout or blanket background removal.
+3. Rename the summary regression to describe accepted behavior instead of a diagnostic. Assertions and test count are unchanged; broader test curation belongs to the next shipping phase. No new product decision, setting, dependency, commit or live-session change is introduced.
+
+### Rebased simplification validation
+
+On Node 24.15.0: `PI_TRUE_COLOR=0 make check` passed strict types, all 34 tests and package verification; `FORCE_COLOR=3 PI_TRUE_COLOR=1 node --test test/render.test.ts` passed all 26 renderer cases; `PI_TRUE_COLOR=0 npm run pack:check` passed prepack checks and the exact six-file artifact verification. These cover three-state/native presentation, custom control updates, streaming failures/completion, synchronous redraw protection and ownership query failure/recovery. Node 22/Pi 1.5 results above are earlier validation, not rerun during this documentation/test-title-only phase. Device, measured phone latency and Linux gaps remain as listed above.

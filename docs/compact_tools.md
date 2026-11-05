@@ -1,6 +1,6 @@
 # P0: compact tool output in Rex iOS
 
-Historical P0 implementation and review record. The subsequent three-state interaction and rendering-cache changes are documented in [three_state_tools_plan.md](three_state_tools_plan.md).
+Historical framed P0 implementation and review record. The accepted borderless presentation, three-state interaction and rendering-cache changes supersede the frame requirements below; see [three_state_tools_plan.md](three_state_tools_plan.md).
 
 ## Workspace intent: user requirements
 
