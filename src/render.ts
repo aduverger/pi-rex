@@ -113,15 +113,17 @@ class ToolFrame implements Component {
     }
     if (!lines.length) return [];
     const body = this.replacePadding ? lines.slice(1, -1) : lines;
-    const side = this.theme.fg("dim", "│");
+    // Diagnostic: replace summary decorations with spaces without changing geometry or click targets.
+    const borderlessSummary = this.onSummaryClick !== undefined;
+    const side = borderlessSummary ? " " : this.theme.fg("dim", "│");
     const frame = [
-      this.theme.fg("dim", `╭${"─".repeat(innerWidth)}╮`) + " ",
+      borderlessSummary ? " ".repeat(width) : this.theme.fg("dim", `╭${"─".repeat(innerWidth)}╮`) + " ",
       ...body.map((line) => {
         const fitted = truncateToWidth(line, innerWidth, "");
         // Wrapped diffs can leave inverse highlighting active at the end of a line.
         return `${side}${fitted}\x1b[0m${" ".repeat(Math.max(0, innerWidth - visibleWidth(fitted)))}${side} `;
       }),
-      this.theme.fg("dim", `╰${"─".repeat(innerWidth)}╯`) + " ",
+      borderlessSummary ? " ".repeat(width) : this.theme.fg("dim", `╰${"─".repeat(innerWidth)}╯`) + " ",
     ];
     this.cache = { width, content: lines, frame };
     return frame;

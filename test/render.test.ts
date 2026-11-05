@@ -113,15 +113,17 @@ for (const { name, args, definition, output } of cases) {
   }
 }
 
-test("folded tools share neutral frames without extra padding rows", () => {
-  const theme = rendererTheme();
+test("diagnostic summaries omit border glyphs but retain geometry, neutral styling and gutter", () => {
   for (const { name, args, definition } of cases) {
     const { component, setMobile } = tool(name, args, definition);
     component.updateResult({ content: [{ type: "text", text: "done" }], isError: false });
     const lines = component.render(40);
     assert.equal(lines.length, 4);
-    assert.equal(lines[1], theme.fg("dim", `╭${"─".repeat(37)}╮`) + " ");
-    assert.equal(lines.at(-1), theme.fg("dim", `╰${"─".repeat(37)}╯`) + " ");
+    assert.equal(lines[1], " ".repeat(40));
+    assert.equal(lines.at(-1), " ".repeat(40));
+    assert.doesNotMatch(plain(component).join("\n"), /[╭╮╰╯│─]/);
+    assert.equal(sliceByColumn(stripTerminalSequences(lines[2]), 0, 2), "  ");
+    assert.equal(sliceByColumn(stripTerminalSequences(lines[2]), 38, 2), "  ");
     assert.ok(lines.slice(1).every((line) => visibleWidth(line) === 40 && line.endsWith(" ")));
     setMobile(false);
     assert.ok(!plain(component).some((line) => line.startsWith("╭")));
@@ -175,9 +177,10 @@ test("short custom tool highlights do not color frame padding or the narrow gutt
   assert.ok(narrow.slice(2).every((cell) => cell === " "));
 });
 
-test("Pi's auto scrollbar only covers the gutter, leaving frame corners and contents intact", () => {
-  const { component } = tool("read", { path: "src/中文.ts" });
+test("Pi's auto scrollbar only covers the gutter, leaving preview frame corners and contents intact", () => {
+  const { component } = tool("read", { path: "src/中文.ts" }, createReadToolDefinition(process.cwd()) as ToolRenderers);
   component.updateResult({ content: [{ type: "text", text: "file contents" }], isError: false });
+  clickRow(component, "read");
   const document = new Container();
   document.addChild(component);
   document.addChild(new Text("tail\n".repeat(12), 0, 0));
@@ -206,7 +209,7 @@ test("Pi's auto scrollbar only covers the gutter, leaving frame corners and cont
   }
 });
 
-test("frame colors follow Pi theme changes", () => {
+test("preview frame colors follow Pi theme changes", () => {
   const capabilities = getCapabilities();
   try {
     // Both palettes' dim colors quantize to the same ANSI index in 256-color mode.
@@ -214,6 +217,7 @@ test("frame colors follow Pi theme changes", () => {
     initTheme("dark", false);
     const { component } = tool("read", { path: "src/example.ts" });
     component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
+    clickRow(component, "read");
     const darkBorder = component.render(40)[1];
     initTheme("light", false);
     component.invalidate();
@@ -298,7 +302,7 @@ test("Unicode summaries survive resizing to tiny widths and disarm control seque
     assert.ok(component.render(width).every((line) => visibleWidth(line) <= width));
     if (width >= 12) {
       assert.equal(content(component, width).length, 1);
-      assert.ok(plain(component, width).some((line) => line.startsWith("╭")));
+      assert.doesNotMatch(plain(component, width).join("\n"), /[╭╮╰╯│─]/);
     }
   }
   assert.doesNotMatch(content(component, 100)[0], /\x1b|\n|secret output/);

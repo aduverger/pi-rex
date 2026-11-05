@@ -1,5 +1,7 @@
 # Three-state tool output and long-session rendering
 
+> Local trial on `diagnostic/borderless-summary`: collapsed summaries have spaces instead of border glyphs. Text, styling, geometry, gutter and interaction are retained; preview/full borders are unchanged. The implementation/review record below describes the bordered baseline unless the trial section says otherwise.
+
 Status: implemented on `improve_renderer` (based on main); native iOS acceptance remains outstanding.
 
 ## Workspace intent for review
@@ -145,3 +147,26 @@ The renderer helper changed for this feature, so its existing consumers were rev
 Isolated counterfactual checks rejected a shared-state mutation and removal of redraw protection at the named regressions. All 26 renderer tests also passed with an extra harmless theme lookup per frame, which the removed exact-zero counter would reject. These experiments changed only temporary copies; production source was not edited.
 
 Net curation: one added case, two rewritten cases, one removed case, no consolidation; still 34 tests. No production or configuration change was required. Device/latency/Linux acceptance gaps above remain open.
+
+## Borderless-summary field trial
+
+Authorized after the user reported residual iOS scrolling lag with all tools collapsed. This is a local diagnostic variant based on `improve_renderer` at `9861007`, not a published design change or new configuration setting.
+
+- Replace only summary border glyphs with neutral spaces. Preserve all four terminal rows (Pi's separator, two decoration rows and the summary row), text width/position, gutter, status/error styling, cache behavior and click targets.
+- Keep native preview/full borders, three-state cycling, custom controls, lifecycle and ownership behavior unchanged.
+- Do not change fullscreen, keyboard, terminal geometry, live extension settings or the running session automatically.
+- Validate the existing tests plus diagnostic geometry, native preview borders, themes, scrollbar isolation and error/reversion paths. Validate with actual Pi 1.5 as well as the pinned SDK.
+- To try: once Pi is idle, run `/reload` in the original Pi session, then compare scrolling in Rex iOS with tools collapsed and fullscreen unchanged. Blank space where borders used to be is intentional for this controlled comparison.
+- To restore: switch the checkout to `improve_renderer`, then run `/reload` when Pi is idle. No push or npm publication is part of this trial.
+
+### Trial decision ledger — least confident first
+
+1. Keep the now-blank decoration rows rather than tightening layout. This isolates border painting/encoding from changes in viewport density or scroll distance. If asking were free, I would ask about the final borderless layout only after the performance comparison.
+2. Use a separate local branch instead of a persistent setting or changing the open PR. This makes the experiment reversible without adding production configuration; a permanent design remains a separate decision.
+3. Use the existing summary-only click target to identify the diagnostic decoration change. There is no new mode/component, and preview/full interaction is untouched. This coupling is local to the trial, not a proposed new public renderer contract.
+
+Validation: all 34 tests pass on Node 22/24 and with Pi 1.4/1.5; 26 forced-color renderer tests and the exact six-file package checks pass. The changed geometry fixture checks blank decoration rows, unchanged indentation/height/gutter and no summary border glyphs; preview borders retain their native/style/scrollbar tests.
+
+A synthetic Pi 1.5 fullscreen scrolling replay at the phone's observed 49×42 size (1,000 completed bash widgets plus prose, 240 frames) retained the same scroll range and layout: output fell from 5,699.4 to 2,837.6 bytes/frame, changed-row writes from 40.3 to 26.9/frame, and median host rendering from 1.378 to 0.966 ms. These are memory-terminal measurements, not measured phone latency or proof of the reported cause.
+
+No device improvement is established until the user tries this variant. No live reload, settings change, push or publication was performed.
