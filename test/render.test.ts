@@ -14,9 +14,7 @@ initTheme("dark", false);
 const ui = { requestRender() {} } as TUI;
 const plain = (component: ToolExecutionComponent, width = 40) => component.render(width).map(stripTerminalSequences);
 function content(component: ToolExecutionComponent, width = 40) {
-  const lines = plain(component, width);
-  const body = lines[1]?.startsWith("╭") ? lines.slice(2, -1).map((line) => line.slice(1, -2)) : lines;
-  return body.filter((line) => line.trim());
+  return plain(component, width).filter((line) => line.trim());
 }
 
 function styledCells(line: string, width: number) {
@@ -25,11 +23,10 @@ function styledCells(line: string, width: number) {
 }
 
 function frameBody(component: ToolExecutionComponent, width = 40) {
-  const side = styledCells(rendererTheme().fg("dim", "│"), 1)[0];
   return component.render(width).slice(2, -1).map((line) => {
     const cells = styledCells(line, width);
-    assert.equal(cells[0], side);
-    assert.equal(cells.at(-2), side);
+    assert.equal(cells[0], " ");
+    assert.equal(cells.at(-2), " ");
     assert.equal(cells.at(-1), " ");
     return cells.slice(1, -2);
   });
@@ -62,9 +59,9 @@ function tool(name: string, args: unknown, original?: ToolRenderers) {
   };
 }
 
-function clickRow(component: ToolExecutionComponent, name: string) {
+function clickRow(component: ToolExecutionComponent, row: string | number = 1) {
   const lines = plain(component);
-  const y = lines.findIndex((line) => line.includes(name));
+  const y = typeof row === "number" ? row : lines.findIndex((line) => line.includes(row));
   assert.ok(y >= 0);
   const result = component.handleMouse({
     type: "click", button: "left", x: 2, y, screenX: 2, screenY: y,
@@ -100,7 +97,9 @@ for (const { name, args, definition, output } of cases) {
         const native = baseline.render(37);
         const body = definition.renderShell === "self" ? native.slice(1) : native.slice(2, -1);
         assert.deepEqual(frameBody(component), body.map((line) => styledCells(line, 37)));
-        clickRow(component, "╭");
+        assert.equal(component.render(40)[1], " ".repeat(40));
+        assert.equal(component.render(40).at(-1), " ".repeat(40));
+        clickRow(component);
       }
       assert.equal(content(component).length, 1);
       setMobile(false);
@@ -132,7 +131,7 @@ test("diagnostic summaries omit border glyphs but retain geometry, neutral styli
   }
 });
 
-test("wrapped edit highlighting stays inside the frame, including after resizing and desktop handoff", (t) => {
+test("wrapped edit highlighting stays inside the tool body, including after resizing and desktop handoff", (t) => {
   // Emit inverse ANSI even without a TTY, as Pi does in Rex.
   t.mock.method(Theme.prototype, "inverse", (text: string) => `\x1b[7m${text}\x1b[27m`);
   const definition = createEditToolDefinition(process.cwd()) as ToolRenderers;
@@ -177,7 +176,7 @@ test("short custom tool highlights do not color frame padding or the narrow gutt
   assert.ok(narrow.slice(2).every((cell) => cell === " "));
 });
 
-test("Pi's auto scrollbar only covers the gutter, leaving preview frame corners and contents intact", () => {
+test("Pi's auto scrollbar only covers the gutter without shifting preview contents", () => {
   const { component } = tool("read", { path: "src/中文.ts" }, createReadToolDefinition(process.cwd()) as ToolRenderers);
   component.updateResult({ content: [{ type: "text", text: "file contents" }], isError: false });
   clickRow(component, "read");
@@ -196,11 +195,7 @@ test("Pi's auto scrollbar only covers the gutter, leaving preview frame corners 
     assert.equal(scrollView.isScrollbarVisible, true);
     assert.ok(visible.some((line) => /[│┃█]/.test(sliceByColumn(line, 39, 1))));
     assert.deepEqual(visible.map((line) => sliceByColumn(line, 0, 39)), hidden.map((line) => sliceByColumn(line, 0, 39)));
-    const top = visible.findIndex((line) => line.startsWith("╭"));
-    const bottom = visible.findIndex((line) => line.startsWith("╰"));
-    assert.ok(top >= 0 && bottom > top);
-    assert.equal(sliceByColumn(visible[top], 38, 1), "╮");
-    assert.equal(sliceByColumn(visible[bottom], 38, 1), "╯");
+    assert.ok(visible.every((line) => sliceByColumn(line, 38, 1) === " "));
     scrollView.setScrollbarActive(false);
     scrollView.setScrollbar("hidden");
     assert.deepEqual(render(), hidden);
@@ -209,20 +204,25 @@ test("Pi's auto scrollbar only covers the gutter, leaving preview frame corners 
   }
 });
 
-test("preview frame colors follow Pi theme changes", () => {
+test("expanded tool colors follow Pi theme changes and retain native highlighting", () => {
   const capabilities = getCapabilities();
   try {
-    // Both palettes' dim colors quantize to the same ANSI index in 256-color mode.
     setCapabilities({ ...capabilities, trueColor: true });
     initTheme("dark", false);
-    const { component } = tool("read", { path: "src/example.ts" });
-    component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
-    clickRow(component, "read");
-    const darkBorder = component.render(40)[1];
+    const definition = createReadToolDefinition(process.cwd()) as ToolRenderers;
+    const args = { path: "src/example.ts" };
+    const result = { content: [{ type: "text", text: "const value = 42;" }], isError: false };
+    const { component } = tool("read", args, definition);
+    component.updateResult(result);
+    component.setExpanded(true);
+    const dark = component.render(40);
     initTheme("light", false);
     component.invalidate();
-    assert.equal(component.render(40)[1], rendererTheme().fg("dim", `╭${"─".repeat(37)}╮`) + " ");
-    assert.notEqual(component.render(40)[1], darkBorder);
+    const native = new ToolExecutionComponent("read", "native", args, { showImages: false }, definition, ui, process.cwd());
+    native.updateResult(result);
+    native.setExpanded(true);
+    assert.deepEqual(frameBody(component), native.render(37).slice(2, -1).map((line) => styledCells(line, 37)));
+    assert.notDeepEqual(component.render(40), dark);
   } finally {
     setCapabilities(capabilities);
     initTheme("dark", false);
@@ -340,7 +340,7 @@ test("custom tool details and interactive state survive folding and owner handof
     assert.match(content(component).join("\n"), /read success: 2/);
   };
   assertDetails();
-  clickRow(component, "╭");
+  clickRow(component);
   assertDetails();
   component.setExpanded(false);
   assert.equal(content(component).length, 1);
@@ -472,10 +472,10 @@ test("bash preview survives streaming, resize and handoff, then retains final fa
   assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 5);
   component.updateResult({ content: [{ type: "text", text: `first failure\n${output(21)}` }], isError: true, durationMs: 50 });
   assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 5);
-  clickRow(component, "╭");
+  clickRow(component);
   assert.match(plain(component).join("\n"), /first failure/);
   assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 21);
-  clickRow(component, "╭");
+  clickRow(component);
   assert.equal(content(component).length, 1);
   assert.match(content(component, 100)[0], /✗.*first failure/);
   assert.doesNotMatch(plain(component).join("\n"), /entry-/);
@@ -491,7 +491,7 @@ test("global expansion selects full or summary, including a row locally returned
   assert.ok(content(component).length > 1);
   setToolsExpanded(true);
   assert.equal(plain(component).join("\n").match(/first/g)?.length, 20);
-  clickRow(component, "╭");
+  clickRow(component);
   assert.equal(content(component).length, 1);
   clickRow(component, "bash");
   assert.equal(plain(component).join("\n").match(/first/g)?.length, 5);
@@ -515,14 +515,14 @@ test("tools sharing a renderer keep their output and local expansion choices ind
   assert.equal(plain(first).join("\n").match(/first-\d+/g)?.length, 5);
   assert.doesNotMatch(plain(first).join("\n"), /second-/);
   assert.equal(content(second).length, 1);
-  clickRow(first, "╭");
+  clickRow(first);
   clickRow(second, "bash");
   assert.equal(plain(first).join("\n").match(/first-\d+/g)?.length, 20);
   assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);
   first.updateResult({ content: [{ type: "text", text: "first failed\ntrace detail" }], isError: true, durationMs: 50 });
   assert.match(plain(first).join("\n"), /trace detail/);
   assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);
-  clickRow(first, "╭");
+  clickRow(first);
   assert.match(content(first, 100)[0], /✗.*first failed/);
   assert.doesNotMatch(plain(first).join("\n"), /trace detail/);
   assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);

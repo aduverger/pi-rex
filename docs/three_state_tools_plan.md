@@ -1,6 +1,6 @@
 # Three-state tool output and long-session rendering
 
-> Local trial on `diagnostic/borderless-summary`: collapsed summaries have spaces instead of border glyphs. Text, styling, geometry, gutter and interaction are retained; preview/full borders are unchanged. The implementation/review record below describes the bordered baseline unless the trial section says otherwise.
+> Local trial on `diagnostic/borderless-summary`: all three tool states now use spaces instead of decorative border glyphs. Text, native backgrounds/highlighting, geometry, gutter and interaction are retained. The implementation/review record below describes the bordered baseline unless the trial sections say otherwise.
 
 Status: implemented on `improve_renderer` (based on main); native iOS acceptance remains outstanding.
 
@@ -148,7 +148,7 @@ Isolated counterfactual checks rejected a shared-state mutation and removal of r
 
 Net curation: one added case, two rewritten cases, one removed case, no consolidation; still 34 tests. No production or configuration change was required. Device/latency/Linux acceptance gaps above remain open.
 
-## Borderless-summary field trial
+## Initial summary-only borderless field trial
 
 Authorized after the user reported residual iOS scrolling lag with all tools collapsed. This is a local diagnostic variant based on `improve_renderer` at `9861007`, not a published design change or new configuration setting.
 
@@ -169,4 +169,20 @@ Validation: all 34 tests pass on Node 22/24 and with Pi 1.4/1.5; 26 forced-color
 
 A synthetic Pi 1.5 fullscreen scrolling replay at the phone's observed 49×42 size (1,000 completed bash widgets plus prose, 240 frames) retained the same scroll range and layout: output fell from 5,699.4 to 2,837.6 bytes/frame, changed-row writes from 40.3 to 26.9/frame, and median host rendering from 1.378 to 0.966 ms. These are memory-terminal measurements, not measured phone latency or proof of the reported cause.
 
-No device improvement is established until the user tries this variant. No live reload, settings change, push or publication was performed.
+The user subsequently reported slightly better scrolling, then requested border removal in expanded output too. This is subjective device feedback, not a measured phone-latency result. No automatic live reload, settings change, push or publication was performed.
+
+## Borderless preview/full follow-up
+
+Extend the local trial to remove decorative borders from preview and full output as well. Keep native success/error/pending backgrounds, code/diff highlighting, original controls, text width, spacer rows, gutter and three-state/global expansion behavior. No fullscreen or keyboard change, live reload, dependency or configuration option is introduced.
+
+The existing mobile wrapper now only handles layout, clipping, ANSI isolation, caching and mouse delegation; its border-only theme dependency and summary-decoration condition are removed. Tests use the unchanged padding-row click target rather than looking for removed corner glyphs. Native styled-cell comparisons remain, while corner/theme-border assertions are replaced by neutral margins, scrollbar/content isolation and native highlighted content after a theme switch.
+
+### Follow-up decisions — least confident first
+
+1. Retain the blank spacer rows and text inset for another controlled comparison, rather than combining border removal with tighter layout. If asking were free, I would ask about final spacing after this trial; no layout redesign was requested.
+2. Keep native background colors and syntax/diff styling: the requested removal concerns the decorative frame, not another blanket background change.
+3. Remove unused border-specific machinery instead of adding a second display flag or a persistent setting. The renamed mobile shell is the same existing wrapper, not a new UI component.
+
+Validation: `PI_TRUE_COLOR=0 make check` and `PI_TRUE_COLOR=0 npm run pack:check` pass (34 tests and six-file source artifact), as do all 34 tests on Node 22.19.0 and actual Pi 1.5, plus 26 forced-color renderer cases. Preview/full styled content still matches native Pi, including light-theme syntax colors, wrapped diffs, error output, mouse focus/coordinates and scrollbar isolation. Padding-row taps still cycle all three states; streaming completion and fallback-redraw protection remain covered.
+
+Phone acceptance of expanded output and any further latency improvement remain unverified. Reload remains user-directed; no automatic live settings change, push or publication was performed.

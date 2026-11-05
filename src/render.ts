@@ -83,16 +83,14 @@ function toolAppearance(context: RenderContext) {
   return { icon: "✓", foreground: "success", background: "toolSuccessBg" } as const;
 }
 
-class ToolFrame implements Component {
+class MobileToolShell implements Component {
   private content: Component;
-  private theme: Theme;
   private replacePadding: boolean;
   private onSummaryClick?: () => void;
   private cache?: { width: number; content: string[]; frame: string[] };
 
-  constructor(content: Component, theme: Theme, replacePadding: boolean, onSummaryClick?: () => void) {
+  constructor(content: Component, replacePadding: boolean, onSummaryClick?: () => void) {
     this.content = content;
-    this.theme = theme;
     this.replacePadding = replacePadding;
     this.onSummaryClick = onSummaryClick;
   }
@@ -113,17 +111,14 @@ class ToolFrame implements Component {
     }
     if (!lines.length) return [];
     const body = this.replacePadding ? lines.slice(1, -1) : lines;
-    // Diagnostic: replace summary decorations with spaces without changing geometry or click targets.
-    const borderlessSummary = this.onSummaryClick !== undefined;
-    const side = borderlessSummary ? " " : this.theme.fg("dim", "│");
     const frame = [
-      borderlessSummary ? " ".repeat(width) : this.theme.fg("dim", `╭${"─".repeat(innerWidth)}╮`) + " ",
+      " ".repeat(width),
       ...body.map((line) => {
         const fitted = truncateToWidth(line, innerWidth, "");
         // Wrapped diffs can leave inverse highlighting active at the end of a line.
-        return `${side}${fitted}\x1b[0m${" ".repeat(Math.max(0, innerWidth - visibleWidth(fitted)))}${side} `;
+        return ` ${fitted}\x1b[0m${" ".repeat(Math.max(0, innerWidth - visibleWidth(fitted)))}  `;
       }),
-      borderlessSummary ? " ".repeat(width) : this.theme.fg("dim", `╰${"─".repeat(innerWidth)}╯`) + " ",
+      " ".repeat(width),
     ];
     this.cache = { width, content: lines, frame };
     return frame;
@@ -235,7 +230,7 @@ export function compactToolRenderer(
         cached.frame.addChild(cached.call);
       }
       if (!isMobile()) return cached.frame;
-      return new ToolFrame(cached.frame, theme, !selfRendered, summaryOnly ? () => {
+      return new MobileToolShell(cached.frame, !selfRendered, summaryOnly ? () => {
         cached.preview = true;
         context.invalidate();
       } : undefined);
