@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { compactToolRenderer } from "./render.ts";
 import { getRexContext, watchRexOwner } from "./rex.ts";
 
@@ -7,6 +7,7 @@ export default function rexExtension(pi: ExtensionAPI) {
   if (!rex) return;
 
   let mobile = false;
+  let tuiContext: ExtensionContext | undefined;
   let stop: (() => void) | undefined;
   const redraws = new Map<object, () => void>();
 
@@ -15,12 +16,14 @@ export default function rexExtension(pi: ExtensionAPI) {
     next(),
     () => mobile,
     (context) => redraws.set(context.state, context.invalidate),
+    () => tuiContext?.ui.getToolsExpanded() ?? false,
   ));
 
   pi.on("session_start", (_event, ctx) => {
     stop?.();
     redraws.clear();
-    if (ctx.mode !== "tui") return;
+    tuiContext = ctx.mode === "tui" ? ctx : undefined;
+    if (!tuiContext) return;
     let previousExpansion: boolean | undefined;
     stop = watchRexOwner(rex, (next) => {
       mobile = next;
@@ -39,6 +42,7 @@ export default function rexExtension(pi: ExtensionAPI) {
     stop?.();
     stop = undefined;
     mobile = false;
+    tuiContext = undefined;
     redraws.clear();
   });
 }
