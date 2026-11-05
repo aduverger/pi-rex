@@ -1,5 +1,7 @@
 # P0: compact tool output in Rex iOS
 
+Historical framed P0 implementation and review record. The accepted borderless presentation, three-state interaction and rendering-cache changes supersede the frame requirements below; see [three_state_tools_plan.md](three_state_tools_plan.md).
+
 ## Workspace intent: user requirements
 
 Make Pi's existing terminal output easier to read on Rex mobile, taking visual inspiration from Bergère and the supplied screenshots—not building a separate chat application.

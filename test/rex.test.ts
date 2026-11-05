@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { test } from "node:test";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, initTheme, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ToolRenderers } from "@earendil-works/pi-coding-agent";
+import type { TUI } from "@earendil-works/pi-tui";
 import rexExtension from "../src/index.ts";
 import { getRexContext, hasIosOwner, watchRexOwner } from "../src/rex.ts";
 
@@ -164,9 +165,9 @@ test("event stream exit restores normal rendering", async (t) => {
 test("extension watches only in TUI mode and restores expansion on handoff and shutdown", async (t) => {
   const f = await fixture(t);
   const handlers = new Map<string, (event: unknown, context: ExtensionContext) => void>();
-  let rendererRegistered = false;
+  let resolver: Parameters<ExtensionAPI["registerToolRenderer"]>[0] | undefined;
   const pi = {
-    registerToolRenderer() { rendererRegistered = true; },
+    registerToolRenderer(value: NonNullable<typeof resolver>) { resolver = value; },
     on(name: string, handler: (event: unknown, context: ExtensionContext) => void) {
       handlers.set(name, handler);
     },
@@ -180,13 +181,18 @@ test("extension watches only in TUI mode and restores expansion on handoff and s
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   }
-  assert.equal(rendererRegistered, true);
+  assert.ok(resolver);
   let expanded = true;
+  let component: ToolExecutionComponent | undefined;
   const context = {
     mode: "json",
     ui: {
       getToolsExpanded: () => expanded,
-      setToolsExpanded: (value: boolean) => { expanded = value; },
+      setToolsExpanded: (value: boolean) => {
+        if (value === expanded) return;
+        expanded = value;
+        component?.setExpanded(value);
+      },
     },
   } as ExtensionContext;
   for (const mode of ["json", "rpc", "print"] as const) {
@@ -196,15 +202,44 @@ test("extension watches only in TUI mode and restores expansion on handoff and s
     await assert.rejects(readFile(join(f.directory, "pid")), { code: "ENOENT" });
     assert.equal(expanded, true);
   }
+  initTheme("dark", false);
+  const definition = createBashToolDefinition(process.cwd()) as ToolRenderers;
+  const args = { command: "printf sample" };
+  const result = { content: [{ type: "text" as const, text: "sample\n".repeat(20) }], isError: false, durationMs: 50 };
+  const ui = { requestRender() {} } as TUI;
+  component = new ToolExecutionComponent("bash", "integration", args, { showImages: false },
+    resolver("bash", () => definition), ui, process.cwd());
+  component.updateResult(result);
+  const native = new ToolExecutionComponent("bash", "native", args, { showImages: false }, definition, ui, process.cwd());
+  native.updateResult(result);
+  native.setExpanded(true);
   f.state.owner = "client:ios";
   await f.save();
   context.mode = "tui";
   handlers.get("session_start")!({}, context);
   t.after(async () => { handlers.get("session_shutdown")!({}, context); });
   await waitFor(() => !expanded);
+  const tool = component;
+  const render = () => tool.render(40);
+  const clickFrame = () => {
+    const lines = render();
+    assert.equal(tool.handleMouse({ type: "click", button: "left", x: 2, y: 1, screenX: 2, screenY: 1,
+      width: 40, height: lines.length, shift: false, alt: false, ctrl: false })?.handled, true);
+  };
+  assert.equal(render().length, 4);
+  clickFrame();
+  assert.ok(render().length > 4);
+  context.ui.setToolsExpanded(true);
+  clickFrame();
+  assert.equal(render().length, 4);
+  clickFrame();
+  assert.ok(render().length > 4);
+  context.ui.setToolsExpanded(false);
+  assert.equal(render().length, 4);
   f.state.owner = "client:desktop";
   await f.ownerChanged();
   await waitFor(() => expanded);
+  assert.deepEqual(render(), native.render(40));
   f.state.owner = "client:ios";
   await f.ownerChanged();
   await waitFor(() => !expanded);
