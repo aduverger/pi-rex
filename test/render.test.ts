@@ -443,7 +443,7 @@ test("unknown tools have an expandable raw argument/result fallback", () => {
   assert.match(content(component).join("\n"), /external result/);
 });
 
-test("bash cycles summary, native five-row preview and full output; preview survives updates", () => {
+test("bash preview survives streaming, resize and handoff, then retains final failure details", () => {
   const { component, setMobile } = tool("bash", { command: "npm test" }, createBashToolDefinition(process.cwd()) as ToolRenderers);
   const output = (count: number) => Array.from({ length: count }, (_, i) => `entry-${String(i).padStart(2, "0")}`).join("\n");
   const result = (count: number) => ({ content: [{ type: "text" as const, text: output(count) }], isError: false, durationMs: 50 });
@@ -459,17 +459,21 @@ test("bash cycles summary, native five-row preview and full output; preview surv
   }
   component.invalidate();
   component.updateArgs({ command: "npm test --updated" });
-  component.updateResult(result(21));
+  component.updateResult(result(21), true);
   assert.match(plain(component).join("\n"), /npm test --updated/);
   assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 5);
   assert.match(plain(component).join("\n"), /entry-20/);
   setMobile(false);
   setMobile(true);
   assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 5);
+  component.updateResult({ content: [{ type: "text", text: `first failure\n${output(21)}` }], isError: true, durationMs: 50 });
+  assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 5);
   clickRow(component, "╭");
+  assert.match(plain(component).join("\n"), /first failure/);
   assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 21);
   clickRow(component, "╭");
   assert.equal(content(component).length, 1);
+  assert.match(content(component, 100)[0], /✗.*first failure/);
   assert.doesNotMatch(plain(component).join("\n"), /entry-/);
   component.updateArgs({ command: "npm test" });
   component.updateResult(result(20));
@@ -492,50 +496,61 @@ test("global expansion selects full or summary, including a row locally returned
   assert.doesNotMatch(plain(component).join("\n"), /first/);
 });
 
-test("unchanged historical frames reuse formatting; updated errors remain visible", (t) => {
-  const foreground = t.mock.method(Theme.prototype, "fg");
+test("tools sharing a renderer keep their output and local expansion choices independent", () => {
   const definition = createBashToolDefinition(process.cwd()) as ToolRenderers;
-  const document = new Container();
-  let last!: ToolExecutionComponent;
-  for (let i = 0; i < 128; i++) {
-    last = tool("bash", { command: `command-${i}` }, definition).component;
-    last.updateResult({ content: [{ type: "text", text: "done" }], isError: false, durationMs: 50 });
-    document.addChild(last);
-  }
-  const scroll = new ScrollView(document, { follow: "end" });
-  const render = (width = 40) => renderLayoutFrame(scroll, width, 24, () => {});
-  const before = render().lines;
-  foreground.mock.resetCalls();
-  for (let i = 0; i < 20; i++) assert.deepEqual(render().lines, before);
-  assert.equal(foreground.mock.callCount(), 0, "unchanged rows must not rebuild summaries or border styles");
-  assert.ok(render(60).lines.every((line) => visibleWidth(line) <= 60));
-  last.updateResult({ content: [{ type: "text", text: "broke\nstack trace" }], isError: true, durationMs: 50 });
-  const failed = stripTerminalSequences(render().lines.join("\n"));
-  assert.match(failed, /✗.*command-127.*broke/);
-  assert.doesNotMatch(failed, /stack trace/);
+  const renderer = compactToolRenderer("bash", definition, () => true, () => {}, () => false);
+  const create = (name: string) => {
+    const component = new ToolExecutionComponent("bash", `call:${name}`, { command: name }, { showImages: false }, renderer, ui, process.cwd());
+    const text = Array.from({ length: 20 }, (_, i) => `${name}-${i}`).join("\n");
+    component.updateResult({ content: [{ type: "text", text }], isError: false, durationMs: 50 });
+    return component;
+  };
+  const first = create("first");
+  const second = create("second");
+  clickRow(first, "bash");
+  assert.equal(plain(first).join("\n").match(/first-\d+/g)?.length, 5);
+  assert.doesNotMatch(plain(first).join("\n"), /second-/);
+  assert.equal(content(second).length, 1);
+  clickRow(first, "╭");
+  clickRow(second, "bash");
+  assert.equal(plain(first).join("\n").match(/first-\d+/g)?.length, 20);
+  assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);
+  first.updateResult({ content: [{ type: "text", text: "first failed\ntrace detail" }], isError: true, durationMs: 50 });
+  assert.match(plain(first).join("\n"), /trace detail/);
+  assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);
+  clickRow(first, "╭");
+  assert.match(content(first, 100)[0], /✗.*first failed/);
+  assert.doesNotMatch(plain(first).join("\n"), /trace detail/);
+  assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);
 });
 
-test("native fallback redraw requests during synchronization do not re-enter the outer renderer", (t) => {
+test("native fallback updates tolerate synchronous redraw notifications without re-entry", (t) => {
   const updateArgs = ToolExecutionComponent.prototype.updateArgs;
-  let updates = 0;
+  let updating = false;
+  let reentered = false;
   t.mock.method(ToolExecutionComponent.prototype, "updateArgs", function(this: ToolExecutionComponent, args: unknown) {
-    if (++updates > 20) throw new Error("Recursive fallback synchronization");
-    updateArgs.call(this, args);
-    // This public method requests a render, emulating Pi 1.5's updateArgs notification on Pi 1.4.
-    this.setArgsComplete();
+    if (updating) {
+      reentered = true;
+      throw new Error("Synchronous native update re-entry");
+    }
+    updating = true;
+    try {
+      updateArgs.call(this, args);
+      // This public method requests a render, emulating Pi 1.5's updateArgs notification on Pi 1.4.
+      this.setArgsComplete();
+    } finally {
+      updating = false;
+    }
   });
   const { component, setMobile } = tool("external_tool", { query: "example" });
-  const result = { content: [{ type: "text", text: "preserved output" }], isError: false };
-  component.updateResult(result);
-  assert.equal(component.render(40).length, 4);
+  component.updateResult({ content: [{ type: "text", text: "preserved output" }], isError: false });
+  assert.equal(reentered, false);
+  assert.match(plain(component).join("\n"), /✓.*external_tool/);
+  assert.doesNotMatch(plain(component).join("\n"), /preserved output/);
   clickRow(component, "external_tool");
-  assert.match(content(component).join("\n"), /preserved output/);
-  clickRow(component, "╭");
-  clickRow(component, "╭");
-  assert.equal(component.render(40).length, 4);
+  assert.match(plain(component).join("\n"), /example/);
+  assert.match(plain(component).join("\n"), /preserved output/);
   setMobile(false);
-  const native = new ToolExecutionComponent("external_tool", "native", { query: "example" }, { showImages: false }, undefined, ui, process.cwd());
-  native.updateResult(result);
-  assert.deepEqual(component.render(40), native.render(40));
-  assert.ok(updates < 20, "fallback synchronization must not recursively request itself");
+  assert.match(plain(component).join("\n"), /preserved output/);
+  assert.equal(reentered, false, "synchronous native notifications must not re-enter their own update");
 });

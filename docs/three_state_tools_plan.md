@@ -34,7 +34,7 @@ Status: implemented on `improve_renderer` (based on main); native iOS acceptance
 - [x] Cache summary construction/clipping and border formatting by width/content. Still render delegated children to detect independent interactive updates; a blind whole-component cache would make those controls stale.
 - [x] Extend native comparisons to preview/full, three-click cycling, global expansion, updates and ownership handoff. Retain ANSI isolation, images/fallbacks, HTML-result and timer-cleanup checks.
 - [x] Repair fallback redraw re-entry exposed by actual Pi 1.5 validation. Suppress only nested redraw notifications during controlled inner-component synchronization, not independent asynchronous updates.
-- [x] Add deterministic repeated-frame work protection and a reproducible, non-gating long-session benchmark. Compare against native Pi rather than asserting machine-dependent timing thresholds.
+- [x] Add deterministic state/lifecycle/rendering-correctness regressions and a reproducible, non-gating long-session benchmark. Compare against native Pi without asserting machine-dependent timing thresholds or private formatting-call counts.
 - [x] Run Node 22/24 checks, forced-color checks, source package verification and actual Pi 1.5 probes. Record measured scope and remaining device gaps.
 - [x] Update README, record decisions below, review scope and commit the task locally.
 
@@ -50,7 +50,7 @@ Isolated macOS render-only replay, Pi 1.5.0, 5,000 completed bash calls, 40×24 
 4. **Observe children before reusing decoration.** Existing interactive tests prove that controls mutate their own text without calling the outer invalidator. Therefore compare freshly returned child lines before reusing the border, rather than blindly returning a cached component frame. This preserves behavior instead of requiring new invalidation conventions from other extensions.
 5. **Native synchronization guard.** Pi 1.5's public `updateArgs()` requests a redraw. Feeding that request directly back into the outer row during fallback synchronization recurses. Guard that synchronous update boundary, forward independent redraws normally, and clear the guard in `finally`. No runtime-version switch, private host mutation, deferred retry or disabled rendering callback. If asking were free, I would confirm the supported Pi range; both the pinned 1.4 and installed 1.5 are now exercised.
 6. **Keep hidden lifecycle work.** Continue delegating call/result updates in summary mode, reusing original components/state. Rendering less text must not stop native timer cleanup or discard custom interactive state. The performance repair targets repeated frame formatting, not speculative lazy execution of renderer callbacks.
-7. **Performance evidence.** Use a deterministic formatting-work regression plus a separate timing script, not a wall-clock CI threshold. Actual 1.5 probes use temporary source/test copies and the installed SDK, not a changed version label or production host modification. If asking were free, I would ask for representative device/session traces before attributing all observed latency to this extension.
+7. **Performance evidence.** Use public rendering/state/lifecycle regressions plus a separate timing script, not private formatting-call counts or a wall-clock CI threshold. Actual 1.5 probes use temporary source/test copies and the installed SDK, not a changed version label or production host modification. If asking were free, I would ask for representative device/session traces before attributing all observed latency to this extension.
 
 ## Validation outcomes
 
@@ -62,7 +62,7 @@ Isolated macOS render-only replay, Pi 1.5.0, 5,000 completed bash calls, 40×24 
 - Eight native tool success/error cases now compare both preview and full styled cells against Pi; no weakening of highlighting/background checks. Generic fallback previews also compare to native output.
 - **120 exact ANSI summary comparisons against main** pass: four built-in tools × pending/success/error × dark/light × five widths, including tiny widths. Summary appearance is unchanged.
 - Existing independent custom-control edits remain visible with the cache; original mouse coordinates/focus, theme refresh, wrapping, scrollbar gutter, sanitization, image placeholders, HTML result retention, streaming timer completion and stored-result integrity remain covered.
-- New regressions protect native five-row bash previews through updates/resize/handoff, the global-collapse case where the local expanded flag is already false, formatting reuse across historical frames, and synchronous fallback redraw recursion. Both formatting-work and fallback-redraw regressions fail against the pre-change renderer.
+- Regressions protect native five-row bash previews through partial updates, final failures, resize and handoff; the global-collapse case where the local expanded flag is already false; independent output/choices for calls sharing a renderer; and synchronous fallback redraw recursion. The original formatting-call-count test was removed as an implementation constraint, not a public behavior. Error refresh remains observable in streaming, shared-renderer and native status tests; rendering cost remains measured by the non-gating benchmark.
 - Actual Pi 1.5 initially failed six legacy fallback/geometry cases because of recursive invalidation. After the guard, the complete suite passes; the pinned 1.4 regression explicitly simulates a public redraw notification so this protection is not dependent on the separate 1.5 probe.
 - `git diff --check` and Markdown link targets checked. No live session, Rex settings, global extension settings or publication changes.
 
@@ -100,3 +100,48 @@ No new product decisions. Least-confident first:
 3. Build the missing-slot native definition with an explicit conditional instead of nested conditional expressions. Preserve every supplied/missing renderer combination. Keep tests and benchmark methodology unchanged for the separate test-curation phase.
 
 The complete scoped diff was reviewed against main and the existing Pi renderer/mouse/lifecycle path. No intent mismatch was identified. Historical implementation validation above is retained separately from the simplification-phase checks reported to `/ship`; no commit is made by this phase.
+
+## Durable test contracts
+
+The renderer helper changed for this feature, so its existing consumers were reviewed as well as newly edited cases. Each row names a wrong observable behavior and an equivalent implementation change the test must tolerate. Unchanged ownership-query/failure fixtures retain their existing contracts in [compact_tools.md](compact_tools.md); no whole-suite cleanup is intended.
+
+| Test | Regression rejected | Behavior-preserving change tolerated |
+| --- | --- | --- |
+| Read success | Summary leaks file content or preview/full loses native read presentation. | Replace frame/summary components while preserving terminal cells. |
+| Read error | Failure loses its cross, message or native error details. | Reorganize status selection and renderer caching. |
+| Write success | Summary exposes write content or preview/full differs from native write rendering. | Change delegated component storage. |
+| Write error | Failure looks successful or native detail text disappears. | Recompose the shell without changing visible styles/content. |
+| Edit success | Native preview/full diff content or highlighting is lost. | Replace border mechanics and equivalent ANSI encoding. |
+| Edit error | Failed edits look successful or lose native error output. | Move status/cache logic into another coherent helper. |
+| Bash success | Output leaks into summary or preview/full/desktop formatting changes. | Replace frame or clipping implementation. |
+| Bash error | Failed shell calls lose their cross, first message or native output. | Change local presentation bookkeeping. |
+| Neutral compact frames | Summary gains colored fill, extra padding or desktop borders. | Build identical visible frames without Box/Container. |
+| Wrapped edit highlights | Wrapped inverse styles color borders/gutter or drop native diff content. | Use equivalent resets or different frame composition. |
+| Short custom highlights | Highlighting spills onto empty padding or the tiny-width gutter. | Change padding/reset mechanics without changing resolved cells. |
+| Auto scrollbar | Revealing the scrollbar overwrites corners or shifts tool content. | Change internal layout with unchanged visible geometry. |
+| Theme changes | Existing tools retain stale theme colors after invalidation. | Rebuild components or refresh styles in place. |
+| Child mouse/focus | A custom control receives shifted coordinates or loses focus. | Replace delegation layers while preserving normalized events. |
+| Folded streaming/errors | Streaming unfolds summary or final failure leaves a pending/success indicator. | Change lazy/eager summary preparation with identical output. |
+| Pending/status styling | Pending full output lacks native background or summary text gets whole-row status fill. | Consolidate appearance helpers or cache styles differently. |
+| Unicode/resize | Tiny widths overflow/throw or terminal controls survive in summaries. | Use another safe Unicode clipping/cache implementation. |
+| Custom interactive state | Edits to existing controls stay stale or counts reset across folding/handoff. | Replace cache organization while observing independent child updates. |
+| HTML results | Independently resolved export result renderers omit expanded output. | Change resolver/component sharing without dropping content. |
+| Generic native fallbacks | Missing slots lose sanitization, native previews, arguments or image placeholders. | Replace adapter internals while retaining native output. |
+| Streaming timer completion | A completed hidden shell keeps requesting periodic redraws. | Change view caching without changing native lifecycle delivery. |
+| Unknown tools | Tools lacking custom renderers cannot reveal arguments/results. | Replace the fallback representation while preserving accessible content. |
+| Streaming preview/final failure | A chosen preview collapses during partial/final updates, loses failure details, or does not cycle back to the neutral success summary after a later update. | Change cache/state representation and style lookup frequency. |
+| Global expansion | Global collapse leaves a local preview visible because its per-row expanded flag was already false. | Use another representation synchronized from the public global preference. |
+| Shared renderer isolation | Updating/expanding one call replaces another call's output or presentation. | Store per-call state anywhere that keeps calls independent. |
+| Synchronous fallback notification | A native redraw notification recursively re-enters the update or hides arguments/results. | Change batching/call counts or adapter structure without synchronous re-entry. |
+| Extension lifecycle integration | Non-TUI modes start watching, global preference wiring fails, or handoff/shutdown loses desktop expansion. | Change context/getter/watcher storage while keeping public lifecycle effects. |
+
+### Test decisions — least confident first
+
+1. Remove the exact-zero `Theme.fg()` counter test. A fast equivalent implementation may call a cached style accessor every frame; call count is not the performance contract. Timing remains a non-gating native/summary/preview benchmark, not a new CI time threshold. If asking were free, I would ask for a device budget before selecting a performance gate.
+2. Add the named missing risk of two calls sharing one renderer. Existing convenience fixtures create separate renderer instances, so they did not prove independent output/local choices. Use two public tool components, not a private-state assertion; retain error refresh here and in the streaming/native cases.
+3. Rewrite the fallback notification fixture to detect actual synchronous re-entry instead of rejecting an arbitrary total of 20 otherwise valid updates. Keep the single public-method notification simulation for pinned Pi 1.4 and validate against actual Pi 1.5 separately. Native parity and three-state cycling already have dedicated cases, so do not duplicate their full assertions here.
+4. Extend the preview update case through a partial result and final error, preserving its resize/handoff/reversion assertions. This adds a missing lifecycle boundary without another near-identical test.
+
+Isolated counterfactual checks rejected a shared-state mutation and removal of redraw protection at the named regressions. All 26 renderer tests also passed with an extra harmless theme lookup per frame, which the removed exact-zero counter would reject. These experiments changed only temporary copies; production source was not edited.
+
+Net curation: one added case, two rewritten cases, one removed case, no consolidation; still 34 tests. No production or configuration change was required. Device/latency/Linux acceptance gaps above remain open.
