@@ -2,7 +2,8 @@
 
 <img width="200" height="200" alt="pi-rex" src="https://github.com/aduverger/pi-rex/blob/main/assets/pirex_icon.png" />
 
-Compact tool calls in [Pi](https://pi.dev) when using the Rex iOS app.
+Compact tool calls in [Pi](https://pi.dev) when your Rex terminal is controlled by the iOS app.
+
 
 ## Development
 
