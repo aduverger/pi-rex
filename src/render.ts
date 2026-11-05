@@ -8,25 +8,44 @@ type ToolResult = Parameters<NonNullable<ToolRenderers["renderResult"]>>[0];
 
 class NativeFallback implements Component {
   private tool: ToolExecutionComponent;
+  private synchronizing = false;
 
   constructor(name: string, original: ToolRenderers | undefined, context: RenderContext, resultOnly: boolean) {
     // Pi supplies only the missing slots; real custom renderers still receive the original context.
-    const definition = original || resultOnly ? {
-      renderShell: "self" as const,
-      renderCall: original?.renderCall || resultOnly ? () => empty : undefined,
-      renderResult: original?.renderResult ? () => empty : undefined,
-    } : undefined;
+    let definition: ToolRenderers | undefined;
+    if (original || resultOnly) {
+      definition = {
+        renderShell: "self",
+        renderCall: original?.renderCall || resultOnly ? () => empty : undefined,
+        renderResult: original?.renderResult ? () => empty : undefined,
+      };
+    }
     this.tool = new ToolExecutionComponent(name, context.toolCallId, context.args, {
       showImages: context.showImages,
       outputPad: context.outputPad,
-    }, definition, { requestRender: context.invalidate } as TUI, context.cwd);
+    }, definition, {
+      requestRender: () => {
+        if (!this.synchronizing) context.invalidate();
+      },
+    } as TUI, context.cwd);
+  }
+
+  private synchronize(update: () => void) {
+    this.synchronizing = true;
+    try {
+      update();
+    } finally {
+      this.synchronizing = false;
+    }
   }
 
   updateCall(args: unknown, context: RenderContext) {
-    this.tool.updateArgs(args);
-    this.tool.setOutputPad(context.outputPad);
-    this.tool.setShowImages(context.showImages);
-    this.tool.setExpanded(context.expanded);
+    this.synchronize(() => {
+      this.tool.updateArgs(args);
+      this.tool.setOutputPad(context.outputPad);
+      this.tool.setShowImages(context.showImages);
+      this.tool.setExpanded(context.expanded);
+    });
   }
 
   updateResult(result: ToolResult, options: ToolRenderResultOptions, context: RenderContext) {
@@ -34,8 +53,10 @@ class NativeFallback implements Component {
     const content = context.showImages && getCapabilities().images
       ? result.content.filter((block) => block.type !== "image")
       : result.content;
-    this.tool.setExpanded(options.expanded);
-    this.tool.updateResult({ ...result, content, isError: context.isError, durationMs: context.durationMs }, options.isPartial);
+    this.synchronize(() => {
+      this.tool.setExpanded(options.expanded);
+      this.tool.updateResult({ ...result, content, isError: context.isError, durationMs: context.durationMs }, options.isPartial);
+    });
   }
 
   render(width: number) {
@@ -44,7 +65,7 @@ class NativeFallback implements Component {
   }
 
   invalidate() {
-    this.tool.invalidate();
+    this.synchronize(() => this.tool.invalidate());
   }
 }
 
@@ -66,23 +87,34 @@ class ToolFrame implements Component {
   private content: Component;
   private theme: Theme;
   private replacePadding: boolean;
+  private onSummaryClick?: () => void;
+  private cache?: { width: number; content: string[]; frame: string[] };
 
-  constructor(content: Component, theme: Theme, replacePadding: boolean) {
+  constructor(content: Component, theme: Theme, replacePadding: boolean, onSummaryClick?: () => void) {
     this.content = content;
     this.theme = theme;
     this.replacePadding = replacePadding;
+    this.onSummaryClick = onSummaryClick;
   }
 
   render(width: number): string[] {
     const frameWidth = width - 1;
     if (frameWidth <= 0) return [];
-    if (frameWidth < 5) return this.content.render(frameWidth).map((line) => truncateToWidth(line, frameWidth, "") + "\x1b[0m ");
-    const innerWidth = frameWidth - 2;
+    const innerWidth = frameWidth < 5 ? frameWidth : frameWidth - 2;
+    // Children can change interactively without invalidating this frame.
     const lines = this.content.render(innerWidth);
+    const cached = this.cache;
+    if (cached?.width === width && lines.length === cached.content.length &&
+      lines.every((line, index) => line === cached.content[index])) return cached.frame;
+    if (frameWidth < 5) {
+      const frame = lines.map((line) => truncateToWidth(line, frameWidth, "") + "\x1b[0m ");
+      this.cache = { width, content: lines, frame };
+      return frame;
+    }
     if (!lines.length) return [];
     const body = this.replacePadding ? lines.slice(1, -1) : lines;
     const side = this.theme.fg("dim", "│");
-    return [
+    const frame = [
       this.theme.fg("dim", `╭${"─".repeat(innerWidth)}╮`) + " ",
       ...body.map((line) => {
         const fitted = truncateToWidth(line, innerWidth, "");
@@ -91,11 +123,17 @@ class ToolFrame implements Component {
       }),
       this.theme.fg("dim", `╰${"─".repeat(innerWidth)}╯`) + " ",
     ];
+    this.cache = { width, content: lines, frame };
+    return frame;
   }
 
   handleMouse(event: TuiMouseEvent) {
     const frameWidth = event.width - 1;
     if (frameWidth <= 0 || event.x >= frameWidth) return undefined;
+    if (this.onSummaryClick && event.type === "click" && event.button === "left") {
+      this.onSummaryClick();
+      return { handled: true };
+    }
     if (frameWidth < 5) return this.content.handleMouse?.({ ...event, width: frameWidth });
     if (event.x <= 0 || event.x >= frameWidth - 1 || event.y <= 0 || event.y >= event.height - 1) return undefined;
     return this.content.handleMouse?.({
@@ -108,6 +146,7 @@ class ToolFrame implements Component {
   }
 
   invalidate() {
+    this.cache = undefined;
     this.content.invalidate();
   }
 }
@@ -117,6 +156,7 @@ export function compactToolRenderer(
   original: ToolRenderers | undefined,
   isMobile: () => boolean,
   track: (context: RenderContext) => void,
+  getToolsExpanded: () => boolean,
 ): ToolRenderers {
   const states = new WeakMap<object, {
     call?: Component;
@@ -124,6 +164,8 @@ export function compactToolRenderer(
     error?: string;
     frame?: Box | Container;
     fallback?: NativeFallback;
+    preview?: boolean;
+    globalExpanded?: boolean;
   }>();
   function state(context: RenderContext) {
     let value = states.get(context.state);
@@ -132,6 +174,14 @@ export function compactToolRenderer(
       states.set(context.state, value);
     }
     return value;
+  }
+
+  function isSummary(context: RenderContext) {
+    const cached = state(context);
+    const globalExpanded = getToolsExpanded();
+    if (cached.globalExpanded !== globalExpanded || context.expanded) cached.preview = false;
+    cached.globalExpanded = globalExpanded;
+    return isMobile() && !context.expanded && !cached.preview;
   }
 
   function summary(args: unknown, theme: Theme, context: RenderContext) {
@@ -149,7 +199,7 @@ export function compactToolRenderer(
     renderCall(args, theme, context) {
       track(context);
       const cached = state(context);
-      const folded = isMobile() && !context.expanded;
+      const summaryOnly = isSummary(context);
       if (!original?.renderCall || !original.renderResult) {
         cached.fallback ??= new NativeFallback(name, original, context, false);
         cached.fallback.updateCall(args, context);
@@ -158,21 +208,35 @@ export function compactToolRenderer(
         ? original.renderCall(args, theme, { ...context, lastComponent: cached.call })
         : cached.fallback;
       const background = toolAppearance(context).background;
-      const backgroundStyle = folded ? undefined : (text: string) => theme.bg(background, text);
-      const selfRendered = original?.renderShell === "self" && !folded;
-      cached.frame = selfRendered || (!original && !folded)
+      const backgroundStyle = summaryOnly ? undefined : (text: string) => theme.bg(background, text);
+      const selfRendered = original?.renderShell === "self" && !summaryOnly;
+      cached.frame = selfRendered || (!original && !summaryOnly)
         ? new Container()
         : new Box(context.outputPad, 1, backgroundStyle);
-      if (folded) {
-        // Pi supplies the result after renderCall; read its cached error when drawing.
+      if (summaryOnly) {
+        // Pi supplies the result after renderCall; build the summary after its error is available.
+        let text: string | undefined;
+        let cachedWidth: number | undefined;
+        let lines: string[] = [];
         cached.frame.addChild({
-          render: (width) => [truncateToWidth(summary(args, theme, context), width)],
-          invalidate() {},
+          render(width) {
+            if (cachedWidth !== width) {
+              text ??= summary(args, theme, context);
+              lines = [truncateToWidth(text, width)];
+              cachedWidth = width;
+            }
+            return lines;
+          },
+          invalidate() { text = undefined; cachedWidth = undefined; },
         });
       } else if (cached.call) {
         cached.frame.addChild(cached.call);
       }
-      return isMobile() ? new ToolFrame(cached.frame, theme, !selfRendered) : cached.frame;
+      if (!isMobile()) return cached.frame;
+      return new ToolFrame(cached.frame, theme, !selfRendered, summaryOnly ? () => {
+        cached.preview = true;
+        context.invalidate();
+      } : undefined);
     },
     renderResult(result, options, theme, context) {
       track(context);
@@ -192,7 +256,7 @@ export function compactToolRenderer(
       } else {
         cached.result = original?.renderCall || !cached.frame ? cached.fallback : empty;
       }
-      if (isMobile() && !options.expanded) return empty;
+      if (isSummary(context)) return empty;
       if (!cached.result) return empty;
       if (cached.frame) {
         cached.frame.addChild(cached.result);

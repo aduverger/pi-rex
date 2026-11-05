@@ -49,14 +49,16 @@ function rendererTheme(): Theme {
 
 function tool(name: string, args: unknown, original?: ToolRenderers) {
   let mobile = true;
+  let toolsExpanded = false;
   let redraw = () => {};
-  const renderer = compactToolRenderer(name, original, () => mobile, (context) => { redraw = context.invalidate; });
+  const renderer = compactToolRenderer(name, original, () => mobile, (context) => { redraw = context.invalidate; }, () => toolsExpanded);
   const component = new ToolExecutionComponent(name, "call:1", args, { showImages: false }, renderer, ui, process.cwd());
   component.setArgsComplete();
   component.markExecutionStarted();
   return {
     component,
     setMobile(value: boolean) { mobile = value; redraw(); },
+    setToolsExpanded(value: boolean) { toolsExpanded = value; component.setExpanded(value); },
   };
 }
 
@@ -80,7 +82,7 @@ const cases = [
 
 for (const { name, args, definition, output } of cases) {
   for (const isError of [false, true]) {
-    test(`${name} ${isError ? "error" : "success"}: folded content is neutral, expanded and desktop views match native Pi`, () => {
+    test(`${name} ${isError ? "error" : "success"}: summary is neutral; preview, full and desktop views match native Pi`, () => {
       const { component, setMobile } = tool(name, args, definition);
       const result = { content: [{ type: "text", text: isError ? "Tool failed" : output }], details: undefined, isError, durationMs: 42 };
       component.updateResult(result);
@@ -93,11 +95,13 @@ for (const { name, args, definition, output } of cases) {
       baseline.setArgsComplete();
       baseline.markExecutionStarted();
       baseline.updateResult(result);
-      baseline.setExpanded(true);
-      const native = baseline.render(37);
-      const body = definition.renderShell === "self" ? native.slice(1) : native.slice(2, -1);
-      assert.deepEqual(frameBody(component), body.map((line) => styledCells(line, 37)));
-      clickRow(component, name === "bash" ? "$" : name);
+      for (const expanded of [false, true]) {
+        baseline.setExpanded(expanded);
+        const native = baseline.render(37);
+        const body = definition.renderShell === "self" ? native.slice(1) : native.slice(2, -1);
+        assert.deepEqual(frameBody(component), body.map((line) => styledCells(line, 37)));
+        clickRow(component, "╭");
+      }
       assert.equal(content(component).length, 1);
       setMobile(false);
       baseline.setExpanded(false);
@@ -332,6 +336,8 @@ test("custom tool details and interactive state survive folding and owner handof
     assert.match(content(component).join("\n"), /read success: 2/);
   };
   assertDetails();
+  clickRow(component, "╭");
+  assertDetails();
   component.setExpanded(false);
   assert.equal(content(component).length, 1);
   component.setExpanded(true);
@@ -351,7 +357,7 @@ test("HTML exports retain results when call and result renderers are resolved in
     const html = createToolHtmlRenderer({
       theme: rendererTheme(),
       cwd: process.cwd(),
-      getToolRenderers: (name) => compactToolRenderer(name, original, () => mobile, () => {}),
+      getToolRenderers: (name) => compactToolRenderer(name, original, () => mobile, () => {}, () => false),
     });
     assert.ok(html.renderCall("call:export", "custom_tool", {}));
     const result = html.renderResult("call:export", "custom_tool", [{ type: "text", text: "preserved result" }], undefined, false);
@@ -393,6 +399,9 @@ test("generic fallbacks match native formatting, sanitization, previews, and ima
       } else {
         assert.equal(content(component).length, 1);
         assert.doesNotMatch(content(component).join("\n"), /remote|line 0/);
+        clickRow(component, "external_tool");
+        const nativeBody = baseline.render(37).slice(2, -1);
+        assert.deepEqual(frameBody(component), nativeBody.map((line) => styledCells(line, 37)));
       }
     }
   }
@@ -402,7 +411,7 @@ test("native streaming timers stop when the tool completes after an iOS handoff"
   t.mock.timers.enable({ apis: ["setInterval"] });
   let redraws = 0;
   let mobile = false;
-  const renderer = compactToolRenderer("bash", createBashToolDefinition(process.cwd()) as ToolRenderers, () => mobile, () => {});
+  const renderer = compactToolRenderer("bash", createBashToolDefinition(process.cwd()) as ToolRenderers, () => mobile, () => {}, () => false);
   const component = new ToolExecutionComponent("bash", "streaming", { command: "long task" }, { showImages: false }, renderer, {
     requestRender() { redraws++; },
   } as TUI, process.cwd());
@@ -432,4 +441,116 @@ test("unknown tools have an expandable raw argument/result fallback", () => {
   assert.ok(component.render(40).join("\n").includes(rendererTheme().getBgAnsi("toolSuccessBg")));
   assert.match(content(component).join("\n"), /example/);
   assert.match(content(component).join("\n"), /external result/);
+});
+
+test("bash preview survives streaming, resize and handoff, then retains final failure details", () => {
+  const { component, setMobile } = tool("bash", { command: "npm test" }, createBashToolDefinition(process.cwd()) as ToolRenderers);
+  const output = (count: number) => Array.from({ length: count }, (_, i) => `entry-${String(i).padStart(2, "0")}`).join("\n");
+  const result = (count: number) => ({ content: [{ type: "text" as const, text: output(count) }], isError: false, durationMs: 50 });
+  component.updateResult(result(20));
+  const summary = component.render(40);
+  assert.equal(content(component).length, 1);
+  clickRow(component, "bash");
+  for (const width of [40, 20, 60, 40]) {
+    const preview = plain(component, width).join("\n");
+    assert.equal(preview.match(/entry-\d+/g)?.length, 5);
+    assert.match(preview, /entry-19/);
+    assert.doesNotMatch(preview, /entry-00/);
+  }
+  component.invalidate();
+  component.updateArgs({ command: "npm test --updated" });
+  component.updateResult(result(21), true);
+  assert.match(plain(component).join("\n"), /npm test --updated/);
+  assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 5);
+  assert.match(plain(component).join("\n"), /entry-20/);
+  setMobile(false);
+  setMobile(true);
+  assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 5);
+  component.updateResult({ content: [{ type: "text", text: `first failure\n${output(21)}` }], isError: true, durationMs: 50 });
+  assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 5);
+  clickRow(component, "╭");
+  assert.match(plain(component).join("\n"), /first failure/);
+  assert.equal(plain(component).join("\n").match(/entry-\d+/g)?.length, 21);
+  clickRow(component, "╭");
+  assert.equal(content(component).length, 1);
+  assert.match(content(component, 100)[0], /✗.*first failure/);
+  assert.doesNotMatch(plain(component).join("\n"), /entry-/);
+  component.updateArgs({ command: "npm test" });
+  component.updateResult(result(20));
+  assert.deepEqual(component.render(40), summary);
+});
+
+test("global expansion selects full or summary, including a row locally returned to preview", () => {
+  const { component, setToolsExpanded } = tool("bash", { command: "npm test" }, createBashToolDefinition(process.cwd()) as ToolRenderers);
+  component.updateResult({ content: [{ type: "text", text: "first\n".repeat(20) }], isError: false, durationMs: 50 });
+  clickRow(component, "bash");
+  assert.ok(content(component).length > 1);
+  setToolsExpanded(true);
+  assert.equal(plain(component).join("\n").match(/first/g)?.length, 20);
+  clickRow(component, "╭");
+  assert.equal(content(component).length, 1);
+  clickRow(component, "bash");
+  assert.equal(plain(component).join("\n").match(/first/g)?.length, 5);
+  setToolsExpanded(false);
+  assert.equal(content(component).length, 1);
+  assert.doesNotMatch(plain(component).join("\n"), /first/);
+});
+
+test("tools sharing a renderer keep their output and local expansion choices independent", () => {
+  const definition = createBashToolDefinition(process.cwd()) as ToolRenderers;
+  const renderer = compactToolRenderer("bash", definition, () => true, () => {}, () => false);
+  const create = (name: string) => {
+    const component = new ToolExecutionComponent("bash", `call:${name}`, { command: name }, { showImages: false }, renderer, ui, process.cwd());
+    const text = Array.from({ length: 20 }, (_, i) => `${name}-${i}`).join("\n");
+    component.updateResult({ content: [{ type: "text", text }], isError: false, durationMs: 50 });
+    return component;
+  };
+  const first = create("first");
+  const second = create("second");
+  clickRow(first, "bash");
+  assert.equal(plain(first).join("\n").match(/first-\d+/g)?.length, 5);
+  assert.doesNotMatch(plain(first).join("\n"), /second-/);
+  assert.equal(content(second).length, 1);
+  clickRow(first, "╭");
+  clickRow(second, "bash");
+  assert.equal(plain(first).join("\n").match(/first-\d+/g)?.length, 20);
+  assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);
+  first.updateResult({ content: [{ type: "text", text: "first failed\ntrace detail" }], isError: true, durationMs: 50 });
+  assert.match(plain(first).join("\n"), /trace detail/);
+  assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);
+  clickRow(first, "╭");
+  assert.match(content(first, 100)[0], /✗.*first failed/);
+  assert.doesNotMatch(plain(first).join("\n"), /trace detail/);
+  assert.equal(plain(second).join("\n").match(/second-\d+/g)?.length, 5);
+});
+
+test("native fallback updates tolerate synchronous redraw notifications without re-entry", (t) => {
+  const updateArgs = ToolExecutionComponent.prototype.updateArgs;
+  let updating = false;
+  let reentered = false;
+  t.mock.method(ToolExecutionComponent.prototype, "updateArgs", function(this: ToolExecutionComponent, args: unknown) {
+    if (updating) {
+      reentered = true;
+      throw new Error("Synchronous native update re-entry");
+    }
+    updating = true;
+    try {
+      updateArgs.call(this, args);
+      // This public method requests a render, emulating Pi 1.5's updateArgs notification on Pi 1.4.
+      this.setArgsComplete();
+    } finally {
+      updating = false;
+    }
+  });
+  const { component, setMobile } = tool("external_tool", { query: "example" });
+  component.updateResult({ content: [{ type: "text", text: "preserved output" }], isError: false });
+  assert.equal(reentered, false);
+  assert.match(plain(component).join("\n"), /✓.*external_tool/);
+  assert.doesNotMatch(plain(component).join("\n"), /preserved output/);
+  clickRow(component, "external_tool");
+  assert.match(plain(component).join("\n"), /example/);
+  assert.match(plain(component).join("\n"), /preserved output/);
+  setMobile(false);
+  assert.match(plain(component).join("\n"), /preserved output/);
+  assert.equal(reentered, false, "synchronous native notifications must not re-enter their own update");
 });

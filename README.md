@@ -25,8 +25,9 @@ Tested with Pi 1.4.0 and Rex server `0.0.1793231964-ga3e149`. Use Pi's fullscree
 - Uses `REX_SESSION` and `REX_BLOCK` to find the terminal, then checks its owner's client platform. A connected phone alone does not activate mobile mode.
 - Follows Rex's `block_owner_changed` event, including handoffs where terminal dimensions stay the same.
 - On iOS, each tool has a neutral rounded frame with a one-column right gutter for Pi's scrollbar, and starts folded to one summary line: status, tool name, and path or command when available. Errors include their first nonempty text line, space permitting. When folded, only the tick/cross carries success/error color and there is no tool background. Expanded tools retain their native backgrounds and code/diff highlighting. Standard blank padding becomes border rows; custom self-rendered details keep their own padding.
-- Tap a tool row to expand or collapse it. Pi's tool-expansion shortcut still works. Expanded views reuse the existing renderers, including codemode's own detail view. Tools without renderers use Pi's native fallback, including sanitized output, argument formatting, previews, and image placeholders.
+- Tap a tool frame to cycle **summary → native preview → full → summary**. Ordinary tool text also advances the cycle; custom interactive controls keep their own actions. The preview is whatever Pi normally shows when collapsed (five visual output rows for bash, not a universal limit). Preview/full retain native backgrounds, formatting and detail views. Pi's global tool-expansion shortcut selects full or summary and resets local previews when its preference changes. Tools without renderers use Pi's native fallback, including sanitization, argument formatting and image placeholders.
 - Restores normal rendering on desktop handoff. The global expansion preference from before mobile mode is restored; Pi retains individual row choices unless its global expansion control resets them.
+- Caches unchanged summaries and frame formatting for long sessions. Delegated children are still checked for interactive updates, and native renderers still receive lifecycle updates while hidden so streaming timers stop normally.
 - Does not change reasoning, assistant Markdown, editor, footer, tool execution, or saved messages.
 
 Outside Rex, the extension does nothing. RPC, print, and JSON modes do not start the owner watcher. Missing ownership information or a failed Rex command leaves normal rendering in place. If the event stream ends, normal rendering returns; use `/reload` to start watching again. There is no polling or automatic reconnect loop.
@@ -45,6 +46,8 @@ npm ci
 make check
 make pack-check
 ```
+
+Run `node scripts/benchmark-renderer.mjs` for a non-gating native/summary/preview comparison at 1,000 and 5,000 tools. This measures host rendering, not phone or end-to-end latency. The implementation plan, decisions and validation are in [docs/three_state_tools_plan.md](docs/three_state_tools_plan.md).
 
 The checks run strict TypeScript validation, Node tests, and package verification. CLI fixtures test ownership changes and failure recovery without touching existing Rex sessions. Renderer tests use Pi's native tool components. CI runs the same gates on Node 22 and 24 for pushes and pull requests. Packaging verifies the source-based extension entry point and permits only the six runtime/documentation files; no compiled build is needed.
 
