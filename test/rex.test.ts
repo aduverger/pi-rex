@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { test } from "node:test";
 import { createBashToolDefinition, initTheme, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ToolRenderers } from "@earendil-works/pi-coding-agent";
-import { stripTerminalSequences, type TUI } from "@earendil-works/pi-tui";
+import type { TUI } from "@earendil-works/pi-tui";
 import rexExtension from "../src/index.ts";
 import { getRexContext, hasIosOwner, watchRexOwner } from "../src/rex.ts";
 
@@ -203,9 +203,16 @@ test("extension watches only in TUI mode and restores expansion on handoff and s
     assert.equal(expanded, true);
   }
   initTheme("dark", false);
-  component = new ToolExecutionComponent("bash", "integration", { command: "printf sample" }, { showImages: false },
-    resolver("bash", () => createBashToolDefinition(process.cwd()) as ToolRenderers), { requestRender() {} } as TUI, process.cwd());
-  component.updateResult({ content: [{ type: "text", text: "sample\n".repeat(20) }], isError: false, durationMs: 50 });
+  const definition = createBashToolDefinition(process.cwd()) as ToolRenderers;
+  const args = { command: "printf sample" };
+  const result = { content: [{ type: "text" as const, text: "sample\n".repeat(20) }], isError: false, durationMs: 50 };
+  const ui = { requestRender() {} } as TUI;
+  component = new ToolExecutionComponent("bash", "integration", args, { showImages: false },
+    resolver("bash", () => definition), ui, process.cwd());
+  component.updateResult(result);
+  const native = new ToolExecutionComponent("bash", "native", args, { showImages: false }, definition, ui, process.cwd());
+  native.updateResult(result);
+  native.setExpanded(true);
   f.state.owner = "client:ios";
   await f.save();
   context.mode = "tui";
@@ -232,7 +239,7 @@ test("extension watches only in TUI mode and restores expansion on handoff and s
   f.state.owner = "client:desktop";
   await f.ownerChanged();
   await waitFor(() => expanded);
-  assert.doesNotMatch(render().map(stripTerminalSequences).join("\n"), /╭/);
+  assert.deepEqual(render(), native.render(40));
   f.state.owner = "client:ios";
   await f.ownerChanged();
   await waitFor(() => !expanded);

@@ -97,8 +97,9 @@ for (const { name, args, definition, output } of cases) {
         const native = baseline.render(37);
         const body = definition.renderShell === "self" ? native.slice(1) : native.slice(2, -1);
         assert.deepEqual(frameBody(component), body.map((line) => styledCells(line, 37)));
-        assert.equal(component.render(40)[1], " ".repeat(40));
-        assert.equal(component.render(40).at(-1), " ".repeat(40));
+        const lines = component.render(40);
+        assert.deepEqual(styledCells(lines[1], 40), Array(40).fill(" "));
+        assert.deepEqual(styledCells(lines[lines.length - 1], 40), Array(40).fill(" "));
         clickRow(component);
       }
       assert.equal(content(component).length, 1);
@@ -118,16 +119,16 @@ test("borderless summaries retain geometry, neutral styling and gutter", () => {
     component.updateResult({ content: [{ type: "text", text: "done" }], isError: false });
     const lines = component.render(40);
     assert.equal(lines.length, 4);
-    assert.equal(lines[1], " ".repeat(40));
-    assert.equal(lines.at(-1), " ".repeat(40));
+    assert.deepEqual(styledCells(lines[1], 40), Array(40).fill(" "));
+    assert.deepEqual(styledCells(lines[lines.length - 1], 40), Array(40).fill(" "));
     assert.doesNotMatch(plain(component).join("\n"), /[╭╮╰╯│─]/);
     assert.equal(sliceByColumn(stripTerminalSequences(lines[2]), 0, 2), "  ");
     assert.equal(sliceByColumn(stripTerminalSequences(lines[2]), 38, 2), "  ");
-    assert.ok(lines.slice(1).every((line) => visibleWidth(line) === 40 && line.endsWith(" ")));
+    assert.ok(lines.slice(1).every((line) => visibleWidth(line) === 40 && styledCells(line, 40)[39] === " "));
     setMobile(false);
-    assert.ok(!plain(component).some((line) => line.startsWith("╭")));
+    component.render(40);
     setMobile(true);
-    assert.equal(component.render(40)[1], lines[1]);
+    assert.deepEqual(component.render(40).map((line) => styledCells(line, 40)), lines.map((line) => styledCells(line, 40)));
   }
 });
 
@@ -396,16 +397,18 @@ test("generic fallbacks match native formatting, sanitization, previews, and ima
       assert.deepEqual(component.render(60), baseline.render(60));
       assert.doesNotMatch(component.render(60).join("\n"), /\x1b\[2J|\x1b\]52;/);
       setMobile(true);
-      if (expanded) {
-        const nativeBody = baseline.render(37).slice(2, -1);
-        assert.deepEqual(frameBody(component), nativeBody.map((line) => styledCells(line, 37)));
-        if (!definition?.renderResult) assert.match(content(component).join("\n"), /image\/png/);
-      } else {
+      if (!expanded) {
         assert.equal(content(component).length, 1);
         assert.doesNotMatch(content(component).join("\n"), /remote|line 0/);
         clickRow(component, "external_tool");
-        const nativeBody = baseline.render(37).slice(2, -1);
-        assert.deepEqual(frameBody(component), nativeBody.map((line) => styledCells(line, 37)));
+      }
+      const nativeBody = baseline.render(37).slice(2, -1);
+      assert.deepEqual(frameBody(component), nativeBody.map((line) => styledCells(line, 37)));
+      const output = content(component).join("\n");
+      if (!definition?.renderCall) assert.match(output, /example/);
+      if (expanded && !definition?.renderResult) {
+        assert.match(output, /image\/png/);
+        assert.match(output, /line 19/);
       }
     }
   }
@@ -435,16 +438,6 @@ test("native streaming timers stop when the tool completes after an iOS handoff"
   assert.equal(redraws, afterCompletion, "completed hidden tools must stop periodic redraws");
   component.setExpanded(true);
   assert.match(content(component).join("\n"), /finished output/);
-});
-
-test("unknown tools have an expandable raw argument/result fallback", () => {
-  const { component } = tool("external_tool", { query: "example" });
-  component.updateResult({ content: [{ type: "text", text: "external result" }], isError: false });
-  assert.equal(content(component).length, 1);
-  clickRow(component, "external_tool");
-  assert.ok(component.render(40).join("\n").includes(rendererTheme().getBgAnsi("toolSuccessBg")));
-  assert.match(content(component).join("\n"), /example/);
-  assert.match(content(component).join("\n"), /external result/);
 });
 
 test("bash preview survives streaming, resize and handoff, then retains final failure details", () => {

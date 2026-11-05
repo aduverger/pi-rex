@@ -118,7 +118,7 @@ The renderer helper changed for this feature, so its existing consumers were rev
 | Edit error | Failed edits look successful or lose native error output. | Move status/cache logic into another coherent helper. |
 | Bash success | Output leaks into summary or preview/full/desktop formatting changes. | Replace frame or clipping implementation. |
 | Bash error | Failed shell calls lose their cross, first message or native output. | Change local presentation bookkeeping. |
-| Borderless summaries | Summary gains border glyphs, colored fill, changed spacing or desktop decoration. | Build identical terminal cells without Box/Container. |
+| Borderless summaries | Summary gains border glyphs, colored fill or changed spacing, including after an ownership round trip. | Build identical terminal cells without Box/Container. |
 | Wrapped edit highlights | Wrapped inverse styles color margins/gutter or drop native diff content. | Use equivalent resets or different shell composition. |
 | Short custom highlights | Highlighting spills onto empty padding or the tiny-width gutter. | Change padding/reset mechanics without changing resolved cells. |
 | Auto scrollbar | Revealing the scrollbar overwrites tool content or shifts it. | Change internal layout with unchanged visible geometry. |
@@ -129,14 +129,13 @@ The renderer helper changed for this feature, so its existing consumers were rev
 | Unicode/resize | Tiny widths overflow/throw or terminal controls survive in summaries. | Use another safe Unicode clipping/cache implementation. |
 | Custom interactive state | Edits to existing controls stay stale or counts reset across folding/handoff. | Replace cache organization while observing independent child updates. |
 | HTML results | Independently resolved export result renderers omit expanded output. | Change resolver/component sharing without dropping content. |
-| Generic native fallbacks | Missing slots lose sanitization, native previews, arguments or image placeholders. | Replace adapter internals while retaining native output. |
+| Generic native fallbacks | Missing slots lose sanitization, native preview/full formatting, accessible arguments/results or full-output image placeholders, including entirely undefined tools. | Replace adapter internals while retaining native output and accessible content. |
 | Streaming timer completion | A completed hidden shell keeps requesting periodic redraws. | Change view caching without changing native lifecycle delivery. |
-| Unknown tools | Tools lacking custom renderers cannot reveal arguments/results. | Replace the fallback representation while preserving accessible content. |
 | Streaming preview/final failure | A chosen preview collapses during partial/final updates, loses failure details, or does not cycle back to the neutral success summary after a later update. | Change cache/state representation and style lookup frequency. |
 | Global expansion | Global collapse leaves a local preview visible because its per-row expanded flag was already false. | Use another representation synchronized from the public global preference. |
 | Shared renderer isolation | Updating/expanding one call replaces another call's output or presentation. | Store per-call state anywhere that keeps calls independent. |
 | Synchronous fallback notification | A native redraw notification recursively re-enters the update or hides arguments/results. | Change batching/call counts or adapter structure without synchronous re-entry. |
-| Extension lifecycle integration | Non-TUI modes start watching, global preference wiring fails, or handoff/shutdown loses desktop expansion. | Change context/getter/watcher storage while keeping public lifecycle effects. |
+| Extension lifecycle integration | Non-TUI modes start watching, global preference wiring fails, handoff/shutdown loses desktop expansion, or desktop ownership retains mobile formatting. | Change context/getter/watcher storage while keeping public lifecycle effects and native desktop output. |
 
 ### Test decisions — least confident first
 
@@ -197,3 +196,40 @@ The user accepted keeping this presentation. Further latency improvement remains
 ### Rebased simplification validation
 
 On Node 24.15.0: `PI_TRUE_COLOR=0 make check` passed strict types, all 34 tests and package verification; `FORCE_COLOR=3 PI_TRUE_COLOR=1 node --test test/render.test.ts` passed all 26 renderer cases; `PI_TRUE_COLOR=0 npm run pack:check` passed prepack checks and the exact six-file artifact verification. These cover three-state/native presentation, custom control updates, streaming failures/completion, synchronous redraw protection and ownership query failure/recovery. Node 22/Pi 1.5 results above are earlier validation, not rerun during this documentation/test-title-only phase. Device, measured phone latency and Linux gaps remain as listed above.
+
+## Borderless regression contracts and evidence
+
+The table above names both counterfactuals for every affected renderer/integration test: wrong observable behavior rejected and equivalent implementation changes tolerated. Unchanged Rex query/event failure contracts remain in the historical P0 record. Native styled-cell comparisons remain intentional contracts, not snapshots of the shell's internal organization. Exact spacer rows/inset/gutter protect the accepted unchanged geometry; ANSI encoding and component identities are not contracts.
+
+### Decisions — least confident first
+
+1. Consolidate the standalone unknown-tool case into the existing undefined/empty/call-only/result-only fallback matrix. Keep explicit argument visibility and full-result text/image assertions alongside native preview/full/background parity and sanitization. The removed case has no distinct remaining risk; no fallback protection is dropped.
+2. Replace obsolete desktop corner-glyph assertions: borderless mobile output also has no corner glyphs. The integration test now compares actual desktop handoff output to native Pi. The summary geometry test checks the complete mobile output after an ownership round trip, rather than one blank row. This protects accepted appearance without depending on shell classes or cache layout.
+3. Compare neutral padding and round-trip summary geometry as resolved styled cells, not raw ANSI bytes. The eight native success/error cases and summary geometry case must tolerate harmless reset encodings on otherwise identical blank rows while still rejecting colored padding, changed margins or lost native styles.
+4. Retain the other changed cases: native tool success/error styles, wrapped/short ANSI isolation, scrollbar overlay, theme refresh, independent interactive controls, export results, hidden timer completion, streaming preview/failure/reversion, global preview reset, shared-renderer isolation and native redraw re-entry each reject distinct behavior. Keep pinned integration seams where the regression is actual Pi layout/export/ANSI resolution; do not replace those with mocks or add private call-count/timing assertions.
+
+No new product behavior or production/configuration edit was needed. Added: 0; rewritten existing cases: 11 (eight generated native success/error cases plus summary geometry, generic fallbacks and extension integration); consolidation: 1, removing 1 duplicate standalone case. The resulting suite has 33 tests, including 25 renderer cases. The fallback matrix rewrite is included in the 11 rewritten cases; consolidation/removal describe that same operation, not additional deletions.
+
+### Counterfactual experiments
+
+Only temporary source/test copies were mutated in `/tmp/pi-rex-borderless-curation.AOxyME`; repository production source remained unchanged.
+
+- Replacing full-reset SGR encodings with equivalent empty-parameter SGR encodings passed all 33 tests.
+- Prefixing neutral spacer rows and appending harmless ANSI resets to mobile output rows also passed all 33 tests, demonstrating that padding/gutter assertions protect visible cells rather than byte encoding.
+- Incorrectly using a result-only fallback for ordinary calls was rejected by the fallback matrix: arguments/native call content disappeared.
+- Removing the upper mobile spacer was rejected by the borderless geometry case.
+- Keeping mobile formatting active after desktop handoff was rejected by the extension integration's native-output comparison. A missing-border-glyph assertion would not distinguish these presentations.
+
+An initial check overreached by requiring image placeholders in a native preview truncated before that image. Keep native preview parity authoritative and assert image visibility in full output; no production behavior was changed to satisfy the test.
+
+### Current validation
+
+- `PI_TRUE_COLOR=0 make check`: strict types, all 33 tests and package verification pass on Node 24.15.0.
+- `PATH="/tmp/pi-rex-frameworks.700Spn/node_modules/node/bin:$PATH" PI_TRUE_COLOR=0 make check`: same gates pass on actual Node 22.19.0.
+- `FORCE_COLOR=3 PI_TRUE_COLOR=1 node --test test/render.test.ts`: all 25 renderer cases pass.
+- `PI_TRUE_COLOR=0 node --test test/*.test.ts` in `/tmp/pi-rex-curated-borderless-pi15.wOWebT`, with the actual installed Pi 1.5 SDK linked read-only: all 33 tests pass on Node 24.15.0.
+- `node /tmp/pi-rex-borderless-curation.AOxyME/counterfactuals.mjs`: both equivalent implementations pass all 33 tests and all three intended regressions fail their named tests.
+- `PI_TRUE_COLOR=0 npm run pack:check`: prepack validation and the exact six-file source artifact verification pass; runtime artifact contents are unchanged.
+- `git diff --check`: passes. Only the two test files and this internal decision/evidence record changed; production source and configuration are untouched.
+
+Broad native-device touch/keyboard/IME/accessibility, measured phone latency, Linux, real codemode/model integration and SDK versions beyond the exercised 1.4/1.5 remain unverified. The known iOS HTML custom-call-argument limitation is unchanged. No live system or credential-dependent checks were invoked.
