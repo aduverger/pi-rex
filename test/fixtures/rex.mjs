@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { existsSync, readFileSync, writeFileSync, watchFile } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync, watchFile } from "node:fs";
+import { connect } from "node:net";
 import { setTimeout } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,9 +12,17 @@ const args = process.argv.slice(2);
 if (args.shift() !== "--autostart=false") process.exit(2);
 if (args[0] === "--timeout") args.splice(0, 2);
 const command = args;
-if (command.at(-1) !== "--json") process.exit(2);
+if (command[0] !== "send-key" && command.at(-1) !== "--json") process.exit(2);
 
-if (command[0] === "events") {
+if (command[0] === "send-key") {
+  if (command.join(" ") !== "send-key -s session:test -b block:test ctrl+t") process.exit(2);
+  appendFileSync(join(directory, "keys"), JSON.stringify(command) + "\n");
+  if (read().sendError) process.exit(4);
+  while (read().holdKey && !existsSync(join(directory, "release-key"))) await setTimeout(10);
+  const socket = connect(join(directory, "input.sock"));
+  socket.on("error", () => process.exit(4));
+  socket.on("connect", () => socket.end("\x14"));
+} else if (command[0] === "events") {
   writeFileSync(join(directory, "pid"), String(process.pid));
   console.log(JSON.stringify({ type: "session_event", payload: {
     session_id: "session:test", event: { type: "client_connected", payload: {} },
