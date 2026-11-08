@@ -474,6 +474,34 @@ test("a delayed mobile key cannot override desktop handoff, and later handoffs s
   assert.deepEqual(s.warnings, []);
 });
 
+test("desktop handoff restores a confirmed collapse even when Rex's reply is delayed", async (t) => {
+  const s = await thinkingSession(t);
+  s.f.state.holdReply = true;
+  await s.f.save();
+  await s.own("client:ios");
+  await waitFor(() => s.settings.getHideThinkingBlock());
+  await s.own("client:desktop");
+  assert.equal((await s.keys()).length, 1);
+  await writeFile(join(s.f.directory, "release-reply"), "");
+  await waitFor(() => !s.settings.getHideThinkingBlock());
+  assert.equal((await s.keys()).length, 2);
+  assert.deepEqual(s.warnings, []);
+});
+
+test("shutdown discards an undelivered thinking key without sending a restoration key", async (t) => {
+  const s = await thinkingSession(t);
+  s.f.state.holdKey = true;
+  await s.f.save();
+  await s.own("client:ios");
+  await waitFor(async () => (await s.keys()).length === 1);
+  const closing = s.shutdown("reload");
+  await writeFile(join(s.f.directory, "release-key"), "");
+  await closing;
+  assert.equal(s.settings.getHideThinkingBlock(), false);
+  assert.equal((await s.keys()).length, 1);
+  assert.equal(s.widgets.size, 0);
+});
+
 test("manual Ctrl+T racing key delivery cannot cause a double toggle", async (t) => {
   const s = await thinkingSession(t);
   s.f.state.holdKey = true;
@@ -559,18 +587,25 @@ test("conflicting Ctrl+T overrides cannot trigger another editor action", async 
   assert.ok(s.warnings[0]?.trim());
 });
 
-test("live reload restores thinking before reapplying mobile defaults; quit sends no restoration key", async (t) => {
+test("reload and quit only stop thinking automation; restoration belongs to desktop handoff", async (t) => {
   const s = await thinkingSession(t);
   await s.own("client:ios");
   await waitFor(() => s.settings.getHideThinkingBlock());
   await s.shutdown("reload");
-  assert.equal(s.settings.getHideThinkingBlock(), false);
-  assert.equal((await s.keys()).length, 2);
+  assert.equal(s.settings.getHideThinkingBlock(), true);
+  assert.equal((await s.keys()).length, 1);
+  assert.equal(s.widgets.size, 0);
   await s.start();
+  await s.own("client:ios");
+  await s.own("client:desktop");
+  assert.equal(s.settings.getHideThinkingBlock(), true);
+  assert.equal((await s.keys()).length, 1);
+  s.input("\x14");
+  await s.own("client:ios");
   await waitFor(() => s.settings.getHideThinkingBlock());
   s.tui.stop();
   await s.shutdown("quit");
-  assert.equal((await s.keys()).length, 3);
+  assert.equal((await s.keys()).length, 2);
   assert.equal(s.settings.getHideThinkingBlock(), true);
   assert.equal(s.widgets.size, 0);
 });
