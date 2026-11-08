@@ -22,6 +22,13 @@ export function getRexContext(env: NodeJS.ProcessEnv = process.env): RexContext 
 
 const cliOptions = ["--autostart=false", "--timeout", "2s"];
 
+export async function sendRexKey(context: RexContext, key: string): Promise<void> {
+  await execFileAsync(context.command, [...cliOptions, "send-key", "-s", context.session, "-b", context.block, key], {
+    timeout: 2500,
+    maxBuffer: 1024 * 1024,
+  });
+}
+
 export async function hasIosOwner(context: RexContext, signal?: AbortSignal): Promise<boolean> {
   async function query(args: string[]) {
     const { stdout } = await execFileAsync(context.command, [...cliOptions, ...args, "--json"], {

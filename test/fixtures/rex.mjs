@@ -1,8 +1,11 @@
 #!/usr/bin/env node
+import { once } from "node:events";
 import { existsSync, readFileSync, writeFileSync, watchFile } from "node:fs";
+import { connect } from "node:net";
 import { setTimeout } from "node:timers/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const statePath = join(directory, "state.json");
@@ -11,9 +14,23 @@ const args = process.argv.slice(2);
 if (args.shift() !== "--autostart=false") process.exit(2);
 if (args[0] === "--timeout") args.splice(0, 2);
 const command = args;
-if (command.at(-1) !== "--json") process.exit(2);
+if (command[0] !== "send-key" && command.at(-1) !== "--json") process.exit(2);
 
-if (command[0] === "events") {
+if (command[0] === "send-key") {
+  const { values, positionals } = parseArgs({
+    args: command.slice(1), allowPositionals: true,
+    options: { session: { type: "string", short: "s" }, block: { type: "string", short: "b" } },
+  });
+  if (values.session !== "session:test" || values.block !== "block:test" ||
+    positionals.length !== 1 || positionals[0].toLowerCase() !== "ctrl+t") process.exit(2);
+  if (read().sendError) process.exit(4);
+  while (read().holdKey && !existsSync(join(directory, "release-key"))) await setTimeout(10);
+  const socket = connect(join(directory, "input.sock"));
+  socket.on("error", () => process.exit(4));
+  socket.on("connect", () => socket.end("\x14"));
+  await once(socket, "close");
+  while (read().holdReply && !existsSync(join(directory, "release-reply"))) await setTimeout(10);
+} else if (command[0] === "events") {
   writeFileSync(join(directory, "pid"), String(process.pid));
   console.log(JSON.stringify({ type: "session_event", payload: {
     session_id: "session:test", event: { type: "client_connected", payload: {} },
