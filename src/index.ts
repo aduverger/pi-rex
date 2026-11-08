@@ -126,8 +126,7 @@ function mobileThinking(pi: ExtensionAPI, ctx: ExtensionContext, rex: RexContext
       return;
     }
     if (!editorFocused()) return;
-    const startedRevision = revision;
-    attemptedRevision = startedRevision;
+    attemptedRevision = revision;
     if (!hasThinkingShortcut()) {
       ctx.ui.notify("pi-rex: automatic thinking collapse requires Pi's unambiguous Ctrl+T binding.", "warning");
       return;
@@ -153,7 +152,7 @@ function mobileThinking(pi: ExtensionAPI, ctx: ExtensionContext, rex: RexContext
         clearTimeout(timeout);
         pending = undefined;
         inFlight = undefined;
-        if (revision !== startedRevision) void synchronize();
+        if (attemptedRevision !== revision) void synchronize();
       }
     })();
     return inFlight;

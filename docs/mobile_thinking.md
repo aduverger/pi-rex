@@ -37,7 +37,7 @@ Rex key delivery remains best effort: a key already accepted by Rex cannot be re
 
 ## Validation
 
-The Rex CLI fixture sends real input over a temporary Unix socket to Pi's actual TUI, stock editor, keybinding manager and assistant-message components, using an in-memory native settings manager. It rejects incorrect session/block/key arguments. Tests cover visible/hidden desktop preferences, regular/fullscreen operation through Pi's stable TUI reference, native label/streaming/tapping and unchanged messages, focus changes, released raw input, delayed keys, key releases, manual/synthetic races, manual expansion, transport failure/recovery, intercepted input, remapped/conflicting shortcuts, reload and quit.
+The Rex CLI fixture sends real input over a temporary Unix socket to Pi's actual TUI, stock editor, keybinding manager and assistant-message components, using an in-memory native settings manager. It rejects incorrect session/block/key values without requiring a particular option order. Tests cover visible/hidden desktop preferences, regular/fullscreen operation through Pi's stable TUI reference, native label/streaming/tapping and unchanged messages, focus changes, released raw input, delayed keys, key releases, manual/synthetic races, manual expansion, transport failure/recovery, intercepted input, remapped/conflicting shortcuts, reload and quit.
 
 Verified checks:
 
@@ -45,7 +45,7 @@ Verified checks:
 - The same gates pass on actual Node 22.19.0.
 - All 46 tests and strict types pass against the installed Pi 1.5 SDK in an isolated project; repository development dependencies remain Pi 1.4.
 - `PI_TRUE_COLOR=0 node --test test/rex.test.ts`: all 21 ownership/thinking integration cases pass, including focus changes, transport failure/recovery and teardown.
-- `FORCE_COLOR=3 PI_TRUE_COLOR=1 node --test test/rex.test.ts`: the same 21 cases pass with forced color.
+- `FORCE_COLOR=3 PI_TRUE_COLOR=1 node --test test/*.test.ts`: all 46 cases pass with forced color.
 - `PI_TRUE_COLOR=0 make pack-check`: prepack checks and the exact six-file package verification pass. No dependencies, settings, version or release artifacts were added.
 - `git diff --check`: passes.
 
@@ -57,4 +57,47 @@ The keybinding-manager and stable-TUI-reference imports are pinned SDK integrati
 2. Keep the focus observer and acknowledgement handshake. Pi exposes neither a session-only thinking setter nor direct shortcut invocation. Removing these mechanisms would reintroduce wrong-focus delivery, stale handoff toggles or treating Rex acceptance as Pi confirmation. Do not substitute editor replacement, Pi monkey-patching, arbitrary remapped keys or a retry worker.
 3. Flatten shortcut validation into a direct loop, name the desired preference explicitly, and evaluate focus once per received event. The unasked choice was code organization: preserve the existing predicates and caller-specific policy in the Pi extension rather than move it into shared Rex command infrastructure.
 
-No public API, test contract, configuration or out-of-scope file changed. Test curation remains separate.
+The lifecycle cleanup did not change public APIs, configuration or test contracts.
+
+## Regression contracts
+
+Every branch-added or modified test has both counterfactuals below. The seven unchanged Rex ownership/query contracts and 25 unchanged tool-renderer cases remain separate coverage, not pruning candidates for this feature.
+
+| In-scope case | Concrete wrong behavior rejected | Equivalent refactor tolerated |
+| --- | --- | --- |
+| Tool integration: TUI-only watching and expansion restoration | JSON/RPC/print launches Rex processes, or thinking handoff breaks native desktop tool output/global expansion | Move ownership callbacks or rename lifecycle fields while preserving modes and native rendered output |
+| Visible preference, regular mode | Mobile leaves thought text expanded, alters the native label/answer/message, or fails to restore the desktop preference | Reorder Rex's explicit session/block options or reorganize the controller |
+| Already-hidden preference, regular mode | Sends an unnecessary toggle for already-hidden thinking or changes its saved desktop preference | Cache the preference or reuse native views without changing output or issuing input |
+| Visible preference, fullscreen mode | The stable fullscreen TUI reference is rejected and mobile never collapses thinking | Change focus-check organization while keeping fullscreen eligible |
+| Focus loss during delivery and recovery before the old reply | A dialog receives Ctrl+T, or returning editor focus/redrawing before Rex replies permanently stalls the deferred collapse | Change promise/queue representation, provided the known-consumed request is resumed after the pending command completes |
+| Pi has released terminal input | An ownership change issues a key while an external program owns the terminal | Reorder readiness checks or change observer implementation without sending during the inactive interval |
+| Delayed key after desktop handoff | A stale mobile key hides desktop thinking, or key releases are mistaken for completed input | Use another request identity representation while preserving receipt-time validation |
+| Manual Ctrl+T races Rex delivery | The two indistinguishable inputs toggle twice and leave thinking visible | Replace input bookkeeping fields without changing coalescing outcomes |
+| Manual expansion after automatic completion | Redraws continuously re-hide the user's manual expansion or send another command on handoff when already restored | Change redraw frequency or caching without enforcing the default repeatedly |
+| CLI delivery failure and later recovery | Silently treats an unsuccessful delivery as success, retries a toggle blindly, or cannot recover on a later ownership cycle | Change subprocess error handling or warning wording while retaining a nonempty warning and unchanged preference |
+| Input intercepted after CLI acceptance | Treats CLI success/observed input as confirmed visibility despite another listener consuming it, or emits a restoration toggle it does not own | Reword diagnostics or change input-listener plumbing while still warning and confirming the preference |
+| Remapped Ctrl+T | Dispatches an unrelated shortcut or silently claims the mobile default was applied | Change binding lookup or warning wording while skipping delivery and warning visibly |
+| Conflicting Ctrl+T override | Invokes another editor action, including exit, instead of warning and doing nothing | Normalize user bindings differently or reword warnings |
+| Reload restoration and quit | Loses the original preference across reload, or sends a restoration key after Pi stops reading input on quit | Reorganize teardown state/cleanup without changing emitted input or the resulting preference |
+
+No duplicate case lacked a distinct risk. The native SDK keybinding/TUI-reference fixtures and the simulated process-terminal identity/raw flag remain proportionate integration seams: they exercise actual Pi input/rendering while avoiding real user TTY or settings changes. Warning severity/nonempty content are contracts; exact wording is not. Native **Thinking...** text and explicit input targeting remain contractual.
+
+## Deterministic delivery and pending-focus correction
+
+Command attempts are observed through Node's public subprocess diagnostics and `ChildProcess` spawn event, not by waiting for a child-written log/PID file. Socket delivery is recorded after Pi processes the input. Tests wait for delivery, child completion and the next event-loop turn instead of fixed sleeps; public redraws exercise the observer. CLI parsing uses Node's `parseArgs`, accepting reordered short/long options while retaining strict session/block/key checks.
+
+The strengthened focus test holds Rex's reply after the old key was consumed, returns stock-editor focus and forces a redraw, then releases the reply. Before the fix it reached the final visible-preference assertion and timed out: completion only considered ownership changes, so a focus-invalidated attempt could be stranded. The completion check now resynchronizes an unattempted current ownership revision, including that known-consumed case. Failed or unconfirmed delivery retains its attempted revision and is still not retried blindly. This corrects the existing deferred-collapse behavior; it does not introduce a new product policy.
+
+## Test decisions — least confident first
+
+1. Use the public Node spawn diagnostic rather than add a production test hook or stub out Rex transport. The unasked choice was observation level: parent-side issuance makes negative safety checks deterministic even when child startup is delayed; actual native socket delivery remains the outcome boundary.
+2. Extend the existing focus case with a held reply instead of adding another nearly identical race test. The unasked choice was consolidation: preserve its pre-send and receipt-time checks while covering the missed completion ordering in the same scenario.
+3. Keep all distinct existing cases and retain warning-level/nonempty-message assertions instead of pinning copy. The unasked choice was pruning: no deletion was justified by duplicate protection, so remove incidental timing/argument-order/wording constraints rather than tests.
+
+Added: 0; rewritten existing cases: 13 (the three generated preference/mode cases plus ten individual integration cases); consolidated: 0; removed: 0. The suite remains 46 tests, including 21 ownership/thinking cases. The existing reload/quit case is retained unchanged; its supporting command observer is strengthened.
+
+### Counterfactual evidence
+
+- The focus/reply ordering was reproduced against the prior implementation in `/tmp/pi-rex-thinking-curation-regression.log`; the strengthened existing test failed at the final visibility wait. It passes after the narrowly scoped completion correction.
+- `/tmp/pi-rex-thinking-curation.4bduMD/counterfactuals.mjs` mutates only temporary copies. Reordered explicit CLI options/aliases pass all 46 cases; warning rewording passes all 21 ownership/thinking cases. Removing the released-input guard, suppressing the deferred-focus resynchronization, or allowing the duplicate Ctrl+T each fails its named regression test.
+- No production system, live input route, credential-dependent integration, automatic reload or package release was invoked. The operational limits and review dispositions above remain open.

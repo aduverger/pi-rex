@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import type { ChildProcess } from "node:child_process";
+import { channel } from "node:diagnostics_channel";
 import { chmod, copyFile, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout } from "node:timers/promises";
+import { setImmediate, setTimeout } from "node:timers/promises";
 import { test } from "node:test";
 import { AssistantMessageComponent, createBashToolDefinition, CustomEditor, getSelectListTheme, initTheme, SettingsManager, ToolExecutionComponent, type ExtensionAPI, type ExtensionContext, type ToolRenderers } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, ProcessTerminal, setKeybindings, stripTerminalSequences, TuiAltScreen, TuiMainScreen, type Component, type Terminal, type TUI } from "@earendil-works/pi-tui";
@@ -40,6 +42,7 @@ async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
     exit: false,
     holdOwner: "",
     holdKey: false,
+    holdReply: false,
     sendError: false,
   };
   async function save() {
@@ -167,6 +170,22 @@ test("event stream exit restores normal rendering", async (t) => {
   assert.deepEqual(transitions, [true, false]);
 });
 
+function observeRexCommands(t: Parameters<typeof fixture>[0], command: string) {
+  const commands: { child: ChildProcess; closed: Promise<void> }[] = [];
+  const subprocesses = channel("child_process");
+  const observeCommand = (message: unknown) => {
+    const child = (message as { process: ChildProcess }).process;
+    child.once("spawn", () => {
+      if (child.spawnfile === command) {
+        commands.push({ child, closed: new Promise<void>((resolve) => { child.once("close", () => resolve()); }) });
+      }
+    });
+  };
+  subprocesses.subscribe(observeCommand);
+  t.after(async () => { subprocesses.unsubscribe(observeCommand); });
+  return commands;
+}
+
 function loadExtension(f: Awaited<ReturnType<typeof fixture>>, getSettings: ExtensionAPI["getSettings"]) {
   const handlers = new Map<string, (event: unknown, context: ExtensionContext) => void | Promise<void>>();
   let resolver: Parameters<ExtensionAPI["registerToolRenderer"]>[0] | undefined;
@@ -193,6 +212,7 @@ function loadExtension(f: Awaited<ReturnType<typeof fixture>>, getSettings: Exte
 test("extension watches only in TUI mode and restores expansion on handoff and shutdown", async (t) => {
   const f = await fixture(t);
   const { handlers, resolver } = loadExtension(f, () => ({ hideThinkingBlock: true }));
+  const commands = observeRexCommands(t, f.context.command);
   let expanded = true;
   let component: ToolExecutionComponent | undefined;
   const context = {
@@ -211,8 +231,8 @@ test("extension watches only in TUI mode and restores expansion on handoff and s
   for (const mode of ["json", "rpc", "print"] as const) {
     context.mode = mode;
     await handlers.get("session_start")!({}, context);
-    await setTimeout(100);
-    await assert.rejects(readFile(join(f.directory, "pid")), { code: "ENOENT" });
+    await setImmediate();
+    assert.equal(commands.length, 0);
     assert.equal(expanded, true);
   }
   initTheme("dark", false);
@@ -295,11 +315,16 @@ async function thinkingSession(t: Parameters<typeof fixture>[0], initiallyHidden
   tui.addChild(editor);
   tui.setFocus(editor);
   tui.start();
-  const server = createServer((socket) => socket.on("data", (data) => { input(data.toString()); }));
+  const deliveredKeys: string[] = [];
+  const server = createServer((socket) => socket.on("data", (data) => {
+    input(data.toString());
+    deliveredKeys.push(data.toString());
+  }));
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
     server.listen(join(f.directory, "input.sock"), resolve);
   });
+  const commands = observeRexCommands(t, f.context.command);
   const widgets = new Map<string, Component>();
   const warnings: string[] = [];
   let expanded = true;
@@ -315,7 +340,10 @@ async function thinkingSession(t: Parameters<typeof fixture>[0], initiallyHidden
         if (factory) { const widget = factory(tui); widgets.set(key, widget); tui.addChild(widget); }
         tui.requestRender();
       },
-      notify: (message: string) => { warnings.push(message); },
+      notify: (message: string, type: string) => {
+        if (type === "warning") warnings.push(message);
+        tui.requestRender();
+      },
     },
   } as unknown as ExtensionContext;
   const { handlers } = loadExtension(f, () => settings.getSettings());
@@ -334,11 +362,16 @@ async function thinkingSession(t: Parameters<typeof fixture>[0], initiallyHidden
     await waitFor(() => expanded === (owner !== "client:ios"));
   }
   async function keys() {
-    try { return (await readFile(join(f.directory, "keys"), "utf8")).trim().split("\n").map((line) => JSON.parse(line)); }
-    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+    await setImmediate();
+    return commands.filter(({ child }) => child.spawnargs.includes("send-key"));
+  }
+  async function settleKeys() {
+    const keyCommands = await keys();
+    await Promise.all(keyCommands.map(({ closed }) => closed));
+    await setImmediate();
   }
   const output = () => assistant.render(60).map(stripTerminalSequences).join("\n");
-  return { f, settings, tui, terminal, editor, assistant, message, warnings, widgets, start, shutdown, own, keys, output, input: (data: string) => input(data) };
+  return { f, settings, tui, terminal, editor, assistant, message, warnings, widgets, start, shutdown, own, keys, settleKeys, deliveredKeys, output, input: (data: string) => input(data) };
 }
 
 for (const { initiallyHidden, fullscreen } of [
@@ -359,8 +392,7 @@ for (const { initiallyHidden, fullscreen } of [
     const lines = s.assistant.render(60);
     assert.equal(s.assistant.handleMouse({ type: "click", button: "left", x: 2, y: 1, screenX: 2, screenY: 1,
       width: 60, height: lines.length, shift: false, alt: false, ctrl: false })?.handled, true);
-    s.tui.requestRender();
-    await setTimeout(50);
+    s.tui.renderNow(true);
     assert.match(s.output(), /Private thought/);
     await s.own("client:desktop");
     await waitFor(() => s.settings.getHideThinkingBlock() === initiallyHidden);
@@ -379,17 +411,19 @@ test("thinking collapse waits for the editor and consumes a key if focus changes
   await s.own("client:ios");
   assert.equal((await s.keys()).length, 0);
   s.f.state.holdKey = true;
+  s.f.state.holdReply = true;
   await s.f.save();
   s.tui.setFocus(s.editor);
   s.tui.requestRender();
   await waitFor(async () => (await s.keys()).length === 1);
   s.tui.setFocus(dialog);
   await writeFile(join(s.f.directory, "release-key"), "");
-  await setTimeout(100);
+  await waitFor(() => s.deliveredKeys.length === 1);
   assert.deepEqual(dialogInput, []);
   assert.equal(s.settings.getHideThinkingBlock(), false);
   s.tui.setFocus(s.editor);
-  s.tui.requestRender();
+  s.tui.renderNow(true);
+  await writeFile(join(s.f.directory, "release-reply"), "");
   await waitFor(() => s.settings.getHideThinkingBlock());
   await s.own("client:desktop");
   await waitFor(() => !s.settings.getHideThinkingBlock());
@@ -409,7 +443,6 @@ test("owner changes do not send keys while Pi has released its terminal to anoth
   Object.defineProperty(process.stdin, "isRaw", { value: false, writable: true, configurable: true });
   s.tui.stop();
   await s.own("client:ios");
-  await setTimeout(100);
   assert.equal((await s.keys()).length, 0);
   process.stdin.isRaw = true;
   s.tui.start();
@@ -429,7 +462,8 @@ test("a delayed mobile key cannot override desktop handoff, and later handoffs s
   s.input("\x1b[116;5:3u");
   await s.own("client:desktop");
   await writeFile(join(s.f.directory, "release-key"), "");
-  await setTimeout(100);
+  await waitFor(() => s.deliveredKeys.length === 1);
+  await s.settleKeys();
   assert.equal(s.settings.getHideThinkingBlock(), false);
   assert.equal((await s.keys()).length, 1);
   await s.own("client:ios");
@@ -449,7 +483,8 @@ test("manual Ctrl+T racing key delivery cannot cause a double toggle", async (t)
   s.input("\x14");
   assert.equal(s.settings.getHideThinkingBlock(), true);
   await writeFile(join(s.f.directory, "release-key"), "");
-  await setTimeout(100);
+  await waitFor(() => s.deliveredKeys.length === 1);
+  await s.settleKeys();
   assert.equal(s.settings.getHideThinkingBlock(), true);
   await s.own("client:desktop");
   await waitFor(() => !s.settings.getHideThinkingBlock());
@@ -460,10 +495,9 @@ test("manual thinking expansion is not repeatedly overridden while mobile", asyn
   const s = await thinkingSession(t);
   await s.own("client:ios");
   await waitFor(() => s.settings.getHideThinkingBlock());
-  await setTimeout(50);
+  await s.settleKeys();
   s.input("\x14");
-  s.tui.requestRender();
-  await setTimeout(100);
+  s.tui.renderNow(true);
   assert.equal(s.settings.getHideThinkingBlock(), false);
   await s.own("client:desktop");
   assert.equal((await s.keys()).length, 1);
@@ -474,10 +508,10 @@ test("failed key delivery is not retried blindly and a later ownership cycle can
   s.f.state.sendError = true;
   await s.f.save();
   await s.own("client:ios");
-  await waitFor(() => s.warnings.length === 1);
-  assert.match(s.warnings[0], /delivery failed/);
-  s.tui.requestRender();
-  await setTimeout(100);
+  await waitFor(() => s.warnings.length > 0);
+  assert.ok(s.warnings[0].trim());
+  await s.settleKeys();
+  s.tui.renderNow(true);
   assert.equal(s.settings.getHideThinkingBlock(), false);
   assert.equal((await s.keys()).length, 1);
   await s.own("client:desktop");
@@ -493,8 +527,10 @@ test("an intercepted key is reported as unconfirmed rather than claiming a succe
   const s = await thinkingSession(t);
   const unblock = s.tui.addInputListener(() => ({ consume: true }));
   await s.own("client:ios");
-  await waitFor(() => s.warnings.length === 1);
-  assert.match(s.warnings[0], /could not confirm/);
+  await waitFor(() => s.warnings.length > 0);
+  assert.ok(s.warnings[0].trim());
+  s.tui.renderNow(true);
+  assert.equal((await s.keys()).length, 1);
   assert.equal(s.settings.getHideThinkingBlock(), false);
   await s.own("client:desktop");
   assert.equal((await s.keys()).length, 1);
@@ -510,7 +546,7 @@ test("remapped Ctrl+T is left untouched without sending a key", async (t) => {
   await s.own("client:ios");
   assert.equal(s.settings.getHideThinkingBlock(), false);
   assert.equal((await s.keys()).length, 0);
-  assert.match(s.warnings[0], /Ctrl\+T binding/);
+  assert.ok(s.warnings[0]?.trim());
 });
 
 test("conflicting Ctrl+T overrides cannot trigger another editor action", async (t) => {
@@ -520,7 +556,7 @@ test("conflicting Ctrl+T overrides cannot trigger another editor action", async 
   await s.own("client:ios");
   assert.equal((await s.keys()).length, 0);
   assert.equal(s.settings.getHideThinkingBlock(), false);
-  assert.match(s.warnings[0], /unambiguous/);
+  assert.ok(s.warnings[0]?.trim());
 });
 
 test("live reload restores thinking before reapplying mobile defaults; quit sends no restoration key", async (t) => {
