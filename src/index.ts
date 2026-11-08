@@ -59,25 +59,29 @@ export default function rexExtension(pi: ExtensionAPI) {
 function mobileThinking(pi: ExtensionAPI, ctx: ExtensionContext, rex: RexContext) {
   let mobile = false;
   let collapsedByExtension = false;
-  let stopping = false;
-  let restoreOnStop = false;
-  let disposed = false;
+  let lifecycle: "active" | "restoring" | "stopping" | "disposed" = "active";
   let revision = 0;
   let attemptedRevision = -1;
   let editorFocused = () => false;
   let inFlight: Promise<void> | undefined;
   let pending: { target: boolean; received: boolean; forwarded: boolean; acknowledge: () => void } | undefined;
-  const hidden = () => pi.getSettings().hideThinkingBlock ?? false;
-  function target() {
-    if (stopping && !restoreOnStop) return undefined;
+  const getThinkingHidden = () => pi.getSettings().hideThinkingBlock ?? false;
+
+  function desiredThinkingHidden() {
+    if (lifecycle === "stopping") return undefined;
     if (mobile) return true;
     return collapsedByExtension ? false : undefined;
   }
+
   function hasThinkingShortcut() {
     const keybindings = getKeybindings();
-    return keybindings.matches("\x14", "app.thinking.toggle") &&
-      !Object.entries(keybindings.getUserBindings()).some(([action, keys]) => action !== "app.thinking.toggle" &&
-        (Array.isArray(keys) ? keys : keys ? [keys] : []).some((key) => matchesKey("\x14", key)));
+    if (!keybindings.matches("\x14", "app.thinking.toggle")) return false;
+    for (const [action, binding] of Object.entries(keybindings.getUserBindings())) {
+      if (action === "app.thinking.toggle" || !binding) continue;
+      const keys = Array.isArray(binding) ? binding : [binding];
+      if (keys.some((key) => matchesKey("\x14", key))) return false;
+    }
+    return true;
   }
 
   const unsubscribe = ctx.ui.onTerminalInput((data) => {
@@ -86,14 +90,15 @@ function mobileThinking(pi: ExtensionAPI, ctx: ExtensionContext, rex: RexContext
     if (pending.received) return { consume: true };
     pending.received = true;
     queueMicrotask(pending.acknowledge);
-    if (!editorFocused()) attemptedRevision = -1;
-    pending.forwarded = editorFocused() && target() === pending.target && hidden() !== pending.target &&
+    const focused = editorFocused();
+    if (!focused) attemptedRevision = -1;
+    pending.forwarded = focused && desiredThinkingHidden() === pending.target && getThinkingHidden() !== pending.target &&
       hasThinkingShortcut();
     if (!pending.forwarded) return { consume: true };
   });
 
   function observeFocus() {
-    if (disposed) return;
+    if (lifecycle === "disposed") return;
     ctx.ui.setWidget("pi-rex-thinking", (tui) => {
       editorFocused = () => {
         if (!(tui instanceof TuiMainScreen || tui instanceof TuiAltScreen)) return false;
@@ -113,21 +118,21 @@ function mobileThinking(pi: ExtensionAPI, ctx: ExtensionContext, rex: RexContext
 
   function synchronize(): Promise<void> | undefined {
     if (inFlight) return inFlight;
-    if (disposed || attemptedRevision === revision) return;
-    const next = target();
-    if (next === undefined || hidden() === next) {
+    if (lifecycle === "disposed" || attemptedRevision === revision) return;
+    const hideThinking = desiredThinkingHidden();
+    if (hideThinking === undefined || getThinkingHidden() === hideThinking) {
       if (!mobile) collapsedByExtension = false;
       attemptedRevision = revision;
       return;
     }
     if (!editorFocused()) return;
-    const current = revision;
-    attemptedRevision = current;
+    const startedRevision = revision;
+    attemptedRevision = startedRevision;
     if (!hasThinkingShortcut()) {
       ctx.ui.notify("pi-rex: automatic thinking collapse requires Pi's unambiguous Ctrl+T binding.", "warning");
       return;
     }
-    const attempt = { target: next, received: false, forwarded: false, acknowledge: () => {} };
+    const attempt = { target: hideThinking, received: false, forwarded: false, acknowledge: () => {} };
     const handled = new Promise<void>((resolve) => { attempt.acknowledge = resolve; });
     pending = attempt;
     inFlight = (async () => {
@@ -140,15 +145,15 @@ function mobileThinking(pi: ExtensionAPI, ctx: ExtensionContext, rex: RexContext
           sendFailed = true;
         }
         await handled;
-        if (attempt.forwarded && hidden() === next) collapsedByExtension = next;
-        else if ((!attempt.received || attempt.forwarded) && !stopping) {
+        if (attempt.forwarded && getThinkingHidden() === hideThinking) collapsedByExtension = hideThinking;
+        else if ((!attempt.received || attempt.forwarded) && lifecycle === "active") {
           ctx.ui.notify(`pi-rex: could not confirm thinking visibility${sendFailed ? " (Rex key delivery failed)" : ""}.`, "warning");
         }
       } finally {
         clearTimeout(timeout);
         pending = undefined;
         inFlight = undefined;
-        if (revision !== current) void synchronize();
+        if (revision !== startedRevision) void synchronize();
       }
     })();
     return inFlight;
@@ -156,23 +161,23 @@ function mobileThinking(pi: ExtensionAPI, ctx: ExtensionContext, rex: RexContext
 
   return {
     setMobile(next: boolean) {
-      if (stopping) return;
+      if (lifecycle !== "active") return;
       mobile = next;
       revision++;
       observeFocus();
       void synchronize();
     },
     async dispose(restore: boolean) {
-      stopping = true;
-      restoreOnStop = restore;
+      if (lifecycle === "disposed") return;
+      lifecycle = restore ? "restoring" : "stopping";
       mobile = false;
       revision++;
       await inFlight;
       await synchronize();
-      if (restore && collapsedByExtension && hidden()) {
+      if (restore && collapsedByExtension && getThinkingHidden()) {
         ctx.ui.notify("pi-rex: thinking remains hidden; restore it with Ctrl+T in Pi's editor.", "warning");
       }
-      disposed = true;
+      lifecycle = "disposed";
       unsubscribe();
       ctx.ui.setWidget("pi-rex-thinking", undefined);
     },
